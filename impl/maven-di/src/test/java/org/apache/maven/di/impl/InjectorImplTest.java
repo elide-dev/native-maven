@@ -29,6 +29,7 @@ import org.apache.maven.api.annotations.Nullable;
 import org.apache.maven.api.di.Inject;
 import org.apache.maven.api.di.Named;
 import org.apache.maven.api.di.Priority;
+import org.apache.maven.api.di.Provider;
 import org.apache.maven.api.di.Provides;
 import org.apache.maven.api.di.Qualifier;
 import org.apache.maven.api.di.Singleton;
@@ -513,5 +514,60 @@ public class InjectorImplTest {
 
         @Named
         static class Bar {}
+    }
+
+    @Test
+    void testProviderInjection() {
+        Injector injector = Injector.create().bindImplicit(ProviderInjectionTest.class);
+        ProviderInjectionTest.MyMojo mojo = injector.getInstance(ProviderInjectionTest.MyMojo.class);
+        assertNotNull(mojo);
+        assertNotNull(mojo.serviceProvider);
+        // Provider should return an instance when get() is called
+        ProviderInjectionTest.MyService service = mojo.serviceProvider.get();
+        assertNotNull(service);
+        assertInstanceOf(ProviderInjectionTest.MyServiceImpl.class, service);
+    }
+
+    @Test
+    void testProviderIsLazy() {
+        ProviderLazyTest.COUNTER.set(0);
+        Injector injector = Injector.create().bindImplicit(ProviderLazyTest.class);
+        ProviderLazyTest.MyMojo mojo = injector.getInstance(ProviderLazyTest.MyMojo.class);
+        // Service should NOT have been created yet
+        assertEquals(0, ProviderLazyTest.COUNTER.get());
+        // Now call get() — service is created
+        assertNotNull(mojo.serviceProvider.get());
+        assertEquals(1, ProviderLazyTest.COUNTER.get());
+    }
+
+    static class ProviderInjectionTest {
+
+        interface MyService {}
+
+        @Named
+        static class MyServiceImpl implements MyService {}
+
+        @Named
+        static class MyMojo {
+            @Inject
+            Provider<MyService> serviceProvider;
+        }
+    }
+
+    static class ProviderLazyTest {
+        static final AtomicInteger COUNTER = new AtomicInteger();
+
+        @Named
+        static class MyService {
+            MyService() {
+                COUNTER.incrementAndGet();
+            }
+        }
+
+        @Named
+        static class MyMojo {
+            @Inject
+            Provider<MyService> serviceProvider;
+        }
     }
 }

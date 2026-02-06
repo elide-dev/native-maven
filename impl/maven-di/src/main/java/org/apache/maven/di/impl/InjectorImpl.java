@@ -47,6 +47,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.maven.api.annotations.Nonnull;
+import org.apache.maven.api.di.Provider;
 import org.apache.maven.api.di.Provides;
 import org.apache.maven.api.di.Qualifier;
 import org.apache.maven.api.di.Singleton;
@@ -259,6 +260,13 @@ public class InjectorImpl implements Injector {
                 //noinspection unchecked
                 return () -> (Q) map(map, Supplier::get);
             }
+        }
+        if (key.getRawType() == Provider.class) {
+            Key<Object> k = key.getTypeParameter(0);
+            Supplier<Object> supplier = getCompiledBinding(new Dependency<>(k, dep.optional()));
+            Provider<Object> provider = supplier::get;
+            //noinspection unchecked
+            return () -> (Q) provider;
         }
         if (dep.optional()) {
             return () -> null;
