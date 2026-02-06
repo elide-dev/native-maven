@@ -47,6 +47,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.maven.api.annotations.Nonnull;
+import org.apache.maven.api.di.EagerSingleton;
 import org.apache.maven.api.di.PreDestroy;
 import org.apache.maven.api.di.Provider;
 import org.apache.maven.api.di.Provides;
@@ -65,9 +66,12 @@ public class InjectorImpl implements Injector {
     private final Map<Class<? extends Annotation>, Supplier<Scope>> scopes = new HashMap<>();
     private final Set<String> loadedUrls = new HashSet<>();
     private final ThreadLocal<Set<Key<?>>> resolutionStack = new ThreadLocal<>();
+    private final List<Key<?>> eagerSingletons = new ArrayList<>();
 
     public InjectorImpl() {
-        bindScope(Singleton.class, new SingletonScope());
+        SingletonScope singletonScope = new SingletonScope();
+        bindScope(Singleton.class, singletonScope);
+        bindScope(EagerSingleton.class, singletonScope);
     }
 
     @Nonnull
@@ -112,7 +116,17 @@ public class InjectorImpl implements Injector {
         } catch (Exception e) {
             throw new DIException("Error while discovering DI classes from classLoader", e);
         }
+        initEagerSingletons();
         return this;
+    }
+
+    // Cannot be part of bindImplicit because not all bindings are registered yet.
+    // Eager singletons are only instantiated after discover() has bound all classes.
+    private void initEagerSingletons() {
+        for (Key<?> key : eagerSingletons) {
+            getInstance(key);
+        }
+        eagerSingletons.clear();
     }
 
     @Nonnull
@@ -151,6 +165,9 @@ public class InjectorImpl implements Injector {
     public Injector bindImplicit(@Nonnull Class<?> clazz) {
         validatePreDestroy(clazz);
         Key<?> key = Key.of(clazz, ReflectionUtils.qualifierOf(clazz));
+        if (clazz.isAnnotationPresent(EagerSingleton.class)) {
+            eagerSingletons.add(key);
+        }
         if (clazz.isInterface()) {
             bindings.computeIfAbsent(key, $ -> new HashSet<>());
             if (key.getQualifier() != null) {
@@ -454,7 +471,9 @@ public class InjectorImpl implements Injector {
     private static void validatePreDestroy(Class<?> clazz) {
         boolean hasPreDestroy =
                 Arrays.stream(clazz.getDeclaredMethods()).anyMatch(m -> m.isAnnotationPresent(PreDestroy.class));
-        if (hasPreDestroy && !clazz.isAnnotationPresent(Singleton.class)) {
+        if (hasPreDestroy
+                && !clazz.isAnnotationPresent(Singleton.class)
+                && !clazz.isAnnotationPresent(EagerSingleton.class)) {
             throw new DIException("@PreDestroy is only supported on @Singleton beans, but found on " + clazz.getName());
         }
     }
@@ -532,6 +551,7 @@ public class InjectorImpl implements Injector {
         bindings.clear();
         scopes.clear();
         loadedUrls.clear();
+        eagerSingletons.clear();
         resolutionStack.remove();
     }
 }

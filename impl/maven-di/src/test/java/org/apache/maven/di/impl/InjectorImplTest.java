@@ -19,6 +19,8 @@
 package org.apache.maven.di.impl;
 
 import java.lang.annotation.Retention;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -26,6 +28,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.maven.api.annotations.Nullable;
+import org.apache.maven.api.di.EagerSingleton;
 import org.apache.maven.api.di.Inject;
 import org.apache.maven.api.di.Named;
 import org.apache.maven.api.di.PreDestroy;
@@ -608,6 +611,77 @@ public class InjectorImplTest {
         static class MyService {
             @PreDestroy
             void cleanup() {}
+        }
+    }
+
+    @Test
+    void testEagerSingletonIsSingleton() {
+        Injector injector = Injector.create().bindImplicit(EagerSingletonTest.MyService.class);
+        EagerSingletonTest.MyService s1 = injector.getInstance(EagerSingletonTest.MyService.class);
+        EagerSingletonTest.MyService s2 = injector.getInstance(EagerSingletonTest.MyService.class);
+        assertNotNull(s1);
+        assertEquals(s1.num, s2.num);
+    }
+
+    @Test
+    void testEagerSingletonInstantiatedOnDiscover() {
+        EagerSingletonDiscoverTest.COUNTER.set(0);
+        Injector injector = Injector.create().bindImplicit(EagerSingletonDiscoverTest.MyService.class);
+        // Not yet instantiated — initEagerSingletons() only runs inside discover()
+        assertEquals(0, EagerSingletonDiscoverTest.COUNTER.get());
+        // Trigger eager init via discover() with an empty classloader
+        injector.discover(new URLClassLoader(new URL[0], null));
+        assertEquals(1, EagerSingletonDiscoverTest.COUNTER.get());
+    }
+
+    @Test
+    void testEagerSingletonPreDestroy() {
+        EagerSingletonPreDestroyTest.destroyed = false;
+        Injector injector = Injector.create().bindImplicit(EagerSingletonPreDestroyTest.MyService.class);
+        injector.discover(new URLClassLoader(new URL[0], null));
+        assertFalse(EagerSingletonPreDestroyTest.destroyed);
+        injector.dispose();
+        assertTrue(EagerSingletonPreDestroyTest.destroyed);
+    }
+
+    static class EagerSingletonTest {
+        private static final AtomicInteger COUNTER = new AtomicInteger();
+
+        @Named
+        @EagerSingleton
+        static class MyService {
+            int num = COUNTER.incrementAndGet();
+        }
+    }
+
+    static class EagerSingletonDiscoverTest {
+        static final AtomicInteger COUNTER = new AtomicInteger();
+
+        @Named
+        @EagerSingleton
+        static class MyService {
+            MyService() {
+                COUNTER.incrementAndGet();
+            }
+        }
+    }
+
+    static class EagerSingletonPreDestroyTest {
+        static boolean destroyed = false;
+        static final AtomicInteger COUNTER = new AtomicInteger();
+
+        @Named
+        @EagerSingleton
+        static class MyService {
+
+            MyService() {
+                COUNTER.incrementAndGet();
+            }
+
+            @PreDestroy
+            void cleanup() {
+                destroyed = true;
+            }
         }
     }
 }
