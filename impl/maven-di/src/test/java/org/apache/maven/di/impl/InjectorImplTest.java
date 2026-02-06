@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.maven.api.annotations.Nullable;
 import org.apache.maven.api.di.Inject;
 import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.PreDestroy;
 import org.apache.maven.api.di.Priority;
 import org.apache.maven.api.di.Provider;
 import org.apache.maven.api.di.Provides;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Test;
 
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -568,6 +570,44 @@ public class InjectorImplTest {
         static class MyMojo {
             @Inject
             Provider<MyService> serviceProvider;
+        }
+    }
+
+    @Test
+    void testPreDestroyCalledOnDispose() {
+        Injector injector = Injector.create().bindImplicit(PreDestroyTest.MyService.class);
+        PreDestroyTest.MyService service = injector.getInstance(PreDestroyTest.MyService.class);
+        assertNotNull(service);
+        assertFalse(PreDestroyTest.MyService.destroyed);
+        injector.dispose();
+        assertTrue(PreDestroyTest.MyService.destroyed);
+    }
+
+    @Test
+    void testPreDestroyOnNonSingletonThrows() {
+        assertThrows(DIException.class, () -> {
+            Injector.create().bindImplicit(PreDestroyNonSingletonTest.MyService.class);
+        });
+    }
+
+    static class PreDestroyTest {
+        @Named
+        @Singleton
+        static class MyService {
+            static boolean destroyed = false;
+
+            @PreDestroy
+            void cleanup() {
+                destroyed = true;
+            }
+        }
+    }
+
+    static class PreDestroyNonSingletonTest {
+        @Named
+        static class MyService {
+            @PreDestroy
+            void cleanup() {}
         }
     }
 }

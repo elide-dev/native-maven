@@ -47,6 +47,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.maven.api.annotations.Nonnull;
+import org.apache.maven.api.di.PreDestroy;
 import org.apache.maven.api.di.Provider;
 import org.apache.maven.api.di.Provides;
 import org.apache.maven.api.di.Qualifier;
@@ -148,6 +149,7 @@ public class InjectorImpl implements Injector {
     @Nonnull
     @Override
     public Injector bindImplicit(@Nonnull Class<?> clazz) {
+        validatePreDestroy(clazz);
         Key<?> key = Key.of(clazz, ReflectionUtils.qualifierOf(clazz));
         if (clazz.isInterface()) {
             bindings.computeIfAbsent(key, $ -> new HashSet<>());
@@ -449,8 +451,17 @@ public class InjectorImpl implements Injector {
         }
     }
 
+    private static void validatePreDestroy(Class<?> clazz) {
+        boolean hasPreDestroy =
+                Arrays.stream(clazz.getDeclaredMethods()).anyMatch(m -> m.isAnnotationPresent(PreDestroy.class));
+        if (hasPreDestroy && !clazz.isAnnotationPresent(Singleton.class)) {
+            throw new DIException("@PreDestroy is only supported on @Singleton beans, but found on " + clazz.getName());
+        }
+    }
+
     private static class SingletonScope implements Scope {
         Map<Key<?>, java.util.function.Supplier<?>> cache = new ConcurrentHashMap<>();
+        List<Runnable> destroyCallbacks = new ArrayList<>();
 
         @Nonnull
         @SuppressWarnings("unchecked")
@@ -467,12 +478,40 @@ public class InjectorImpl implements Injector {
                                 synchronized (this) {
                                     if (instance == null) {
                                         instance = unscoped.get();
+                                        registerPreDestroy(instance);
                                     }
                                 }
                             }
                             return instance;
                         }
                     });
+        }
+
+        private void registerPreDestroy(Object instance) {
+            for (Method method : instance.getClass().getDeclaredMethods()) {
+                if (method.isAnnotationPresent(PreDestroy.class)) {
+                    if (method.getParameterCount() != 0) {
+                        throw new DIException("@PreDestroy method must have no parameters: " + method);
+                    }
+                    method.setAccessible(true);
+                    destroyCallbacks.add(() -> {
+                        try {
+                            method.invoke(instance);
+                        } catch (Exception e) {
+                            throw new DIException("Error invoking @PreDestroy method " + method, e);
+                        }
+                    });
+                }
+            }
+        }
+
+        void destroy() {
+            // Invoke in reverse creation order
+            for (int i = destroyCallbacks.size() - 1; i >= 0; i--) {
+                destroyCallbacks.get(i).run();
+            }
+            destroyCallbacks.clear();
+            cache.clear();
         }
     }
 
@@ -482,12 +521,12 @@ public class InjectorImpl implements Injector {
      * @since 4.1
      */
     public void dispose() {
-        // First, clear any singleton‐scope caches
+        // First, destroy singletons (calls @PreDestroy methods and clears cache)
         scopes.values().stream()
                 .map(Supplier::get)
                 .filter(scope -> scope instanceof SingletonScope)
                 .map(scope -> (SingletonScope) scope)
-                .forEach(singleton -> singleton.cache.clear());
+                .forEach(SingletonScope::destroy);
 
         // Now clear everything else
         bindings.clear();
