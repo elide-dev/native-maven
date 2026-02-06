@@ -18,9 +18,8 @@
  */
 package org.apache.maven.lifecycle.internal;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
-
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.execution.ExecutionEvent;
 import org.apache.maven.execution.ExecutionListener;
 import org.apache.maven.execution.MavenSession;

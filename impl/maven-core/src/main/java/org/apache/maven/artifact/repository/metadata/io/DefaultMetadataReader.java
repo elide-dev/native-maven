@@ -18,8 +18,6 @@
  */
 package org.apache.maven.artifact.repository.metadata.io;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
 import javax.xml.stream.XMLStreamException;
 
 import java.io.File;
@@ -30,6 +28,8 @@ import java.nio.file.Files;
 import java.util.Map;
 import java.util.Objects;
 
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.repository.metadata.Metadata;
 import org.apache.maven.metadata.v4.MetadataStaxReader;
 

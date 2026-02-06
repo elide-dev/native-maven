@@ -18,13 +18,12 @@
  */
 package org.apache.maven.execution;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.project.MavenProject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

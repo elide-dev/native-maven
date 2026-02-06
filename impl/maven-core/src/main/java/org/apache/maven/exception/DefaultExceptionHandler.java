@@ -18,9 +18,6 @@
  */
 package org.apache.maven.exception;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.UnknownHostException;
@@ -30,6 +27,8 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.plugin.MojoException;
 import org.apache.maven.lifecycle.LifecycleExecutionException;
 import org.apache.maven.model.building.ModelProblem;

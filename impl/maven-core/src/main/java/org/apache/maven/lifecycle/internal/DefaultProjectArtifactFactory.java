@@ -18,15 +18,14 @@
  */
 package org.apache.maven.lifecycle.internal;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
 import java.io.File;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.factory.ArtifactFactory;
 import org.apache.maven.artifact.resolver.filter.AndArtifactFilter;
