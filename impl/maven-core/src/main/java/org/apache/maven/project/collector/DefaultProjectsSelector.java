@@ -18,14 +18,13 @@
  */
 package org.apache.maven.project.collector;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.execution.MavenExecutionRequest;
 import org.apache.maven.model.building.ModelProblem;
 import org.apache.maven.model.building.ModelProblemUtils;
@@ -40,7 +39,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Utility to select projects for a given set of pom.xml files.
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultProjectsSelector implements ProjectsSelector {
     private static final Logger LOGGER = LoggerFactory.getLogger(DefaultProjectsSelector.class);

@@ -18,8 +18,6 @@
  */
 package org.apache.maven.lifecycle.internal.concurrent;
 
-import javax.inject.Inject;
-import javax.inject.Named;
 import javax.xml.stream.XMLStreamException;
 
 import java.io.IOException;
@@ -43,6 +41,8 @@ import java.util.stream.Stream;
 
 import org.apache.maven.api.Lifecycle;
 import org.apache.maven.api.MonotonicClock;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
 import org.apache.maven.api.services.LifecycleRegistry;
 import org.apache.maven.api.services.MavenException;
 import org.apache.maven.api.xml.XmlNode;

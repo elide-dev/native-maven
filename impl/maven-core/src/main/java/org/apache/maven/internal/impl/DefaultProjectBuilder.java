@@ -18,10 +18,6 @@
  */
 package org.apache.maven.internal.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -33,6 +29,9 @@ import java.util.Optional;
 
 import org.apache.maven.api.Project;
 import org.apache.maven.api.annotations.Nonnull;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.BuilderProblem;
 import org.apache.maven.api.services.DependencyResolverResult;
 import org.apache.maven.api.services.ProjectBuilder;
@@ -52,7 +51,7 @@ import org.apache.maven.project.ProjectBuildingException;
 import org.apache.maven.project.ProjectBuildingRequest;
 import org.apache.maven.project.ProjectBuildingResult;
 
-@Named
+@Named("default")
 @Singleton
 public class DefaultProjectBuilder implements ProjectBuilder {
 

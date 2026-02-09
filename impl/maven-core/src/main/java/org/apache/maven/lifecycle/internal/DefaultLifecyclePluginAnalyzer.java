@@ -18,16 +18,15 @@
  */
 package org.apache.maven.lifecycle.internal;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.Lookup;
 import org.apache.maven.api.xml.XmlNode;
 import org.apache.maven.internal.impl.DefaultLifecycleRegistry;
@@ -53,7 +52,7 @@ import static java.util.Objects.requireNonNull;
  * @since 3.0
  */
 @Singleton
-@Named
+@Named("default")
 public class DefaultLifecyclePluginAnalyzer implements LifeCyclePluginAnalyzer {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());

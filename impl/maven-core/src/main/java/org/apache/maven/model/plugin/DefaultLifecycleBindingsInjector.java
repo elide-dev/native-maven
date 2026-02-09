@@ -18,10 +18,6 @@
  */
 package org.apache.maven.model.plugin;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -29,6 +25,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.lifecycle.LifeCyclePluginAnalyzer;
 import org.apache.maven.model.Build;
 import org.apache.maven.model.Model;
@@ -47,7 +46,7 @@ import org.apache.maven.model.merge.MavenModelMerger;
  * Handles injection of plugin executions induced by the lifecycle bindings for a packaging.
  *
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultLifecycleBindingsInjector implements LifecycleBindingsInjector {
 

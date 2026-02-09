@@ -18,11 +18,6 @@
  */
 package org.apache.maven.internal.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Provider;
-import javax.inject.Singleton;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -39,6 +34,10 @@ import java.util.stream.Stream;
 
 import org.apache.maven.api.DependencyScope;
 import org.apache.maven.api.Lifecycle;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Provider;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.model.InputLocation;
 import org.apache.maven.api.model.InputSource;
 import org.apache.maven.api.model.Plugin;
@@ -81,7 +80,7 @@ import static org.apache.maven.internal.impl.Lifecycles.plugin;
 /**
  * TODO: this is session scoped as SPI can contribute.
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultLifecycleRegistry implements LifecycleRegistry {
 

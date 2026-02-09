@@ -18,16 +18,15 @@
  */
 package org.apache.maven.artifact.handler.manager;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.maven.api.JavaPathType;
 import org.apache.maven.api.Type;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.TypeRegistry;
 import org.apache.maven.artifact.handler.ArtifactHandler;
 import org.apache.maven.artifact.handler.DefaultArtifactHandler;
@@ -38,7 +37,7 @@ import static java.util.Objects.requireNonNull;
 
 /**
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultArtifactHandlerManager extends AbstractEventSpy implements ArtifactHandlerManager {
     private final TypeRegistry typeRegistry;

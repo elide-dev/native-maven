@@ -28,7 +28,7 @@ import org.apache.maven.lifecycle.LifecycleExecutionException;
 /**
  * Default mojo execution strategy. It just iterates over mojo executions and runs one by one
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultMojosExecutionStrategy implements MojosExecutionStrategy {
     @Override

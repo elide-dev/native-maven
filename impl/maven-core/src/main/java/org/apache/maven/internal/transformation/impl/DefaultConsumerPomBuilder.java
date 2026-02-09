@@ -18,9 +18,6 @@
  */
 package org.apache.maven.internal.transformation.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +29,8 @@ import org.apache.maven.api.DependencyScope;
 import org.apache.maven.api.Node;
 import org.apache.maven.api.PathScope;
 import org.apache.maven.api.SessionData;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
 import org.apache.maven.api.feature.Features;
 import org.apache.maven.api.model.Dependency;
 import org.apache.maven.api.model.DistributionManagement;
@@ -93,7 +92,7 @@ import org.slf4j.LoggerFactory;
  *   <li>Preserves relocation information in distribution management</li>
  * </ul>
  */
-@Named
+@Named("default")
 class DefaultConsumerPomBuilder implements PomBuilder {
     private static final String BOM_PACKAGING = "bom";
 

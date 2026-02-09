@@ -18,11 +18,10 @@
  */
 package org.apache.maven.lifecycle.internal.concurrent;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Provider;
-import javax.inject.Singleton;
-
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Provider;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.MessageBuilderFactory;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.lifecycle.internal.ExecutionEventCatapult;

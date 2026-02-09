@@ -18,9 +18,6 @@
  */
 package org.apache.maven.internal.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -41,6 +38,8 @@ import org.apache.maven.api.RemoteRepository;
 import org.apache.maven.api.Service;
 import org.apache.maven.api.SourceRoot;
 import org.apache.maven.api.annotations.Nonnull;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
 import org.apache.maven.api.di.SessionScoped;
 import org.apache.maven.api.services.ArtifactManager;
 import org.apache.maven.api.services.ProjectManager;
@@ -58,7 +57,7 @@ import static org.apache.maven.internal.impl.CoreUtils.map;
  * both {@code ProjectManager} and {@code Service} interfaces so that it can be retrieved using
  * {@link InternalSession#getAllServices()}.
  */
-@Named
+@Named("default")
 @Typed({ProjectManager.class, Service.class})
 @SessionScoped
 public class DefaultProjectManager implements ProjectManager {

@@ -18,10 +18,6 @@
  */
 package org.apache.maven.project;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -54,6 +50,9 @@ import org.apache.maven.api.ProjectScope;
 import org.apache.maven.api.SessionData;
 import org.apache.maven.api.annotations.Nonnull;
 import org.apache.maven.api.annotations.Nullable;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.model.Build;
 import org.apache.maven.api.model.Dependency;
 import org.apache.maven.api.model.DependencyManagement;
@@ -109,7 +108,7 @@ import org.slf4j.LoggerFactory;
  * @deprecated use {@code org.apache.maven.api.services.ProjectBuilder} instead
  */
 @Deprecated(since = "4.0.0")
-@Named
+@Named("default")
 @Singleton
 public class DefaultProjectBuilder implements ProjectBuilder {
 

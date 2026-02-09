@@ -18,16 +18,15 @@
  */
 package org.apache.maven.lifecycle.internal;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.maven.api.Lifecycle;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.lifecycle.LifecycleNotFoundException;
 import org.apache.maven.lifecycle.LifecyclePhaseNotFoundException;
@@ -53,7 +52,7 @@ import static java.util.Objects.requireNonNull;
  *
  * @since 3.0
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultLifecycleTaskSegmentCalculator implements LifecycleTaskSegmentCalculator {
     private static final Logger LOGGER = LoggerFactory.getLogger(DefaultLifecycleTaskSegmentCalculator.class);

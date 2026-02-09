@@ -18,13 +18,12 @@
  */
 package org.apache.maven.internal.transformation.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.IOException;
 import java.util.Map;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.internal.transformation.PomArtifactTransformer;
 import org.apache.maven.internal.transformation.TransformerManager;
 import org.apache.maven.project.MavenProject;
@@ -35,7 +34,7 @@ import org.eclipse.aether.installation.InstallRequest;
 import static java.util.Objects.requireNonNull;
 
 @Singleton
-@Named
+@Named("default")
 public class DefaultTransformerManager implements TransformerManager {
     private final Map<String, PomArtifactTransformer> transformers;
 

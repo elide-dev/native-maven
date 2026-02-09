@@ -18,10 +18,6 @@
  */
 package org.apache.maven.project;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -33,6 +29,9 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.maven.RepositoryUtils;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.xml.XmlNode;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.InvalidRepositoryException;
@@ -62,7 +61,7 @@ import org.slf4j.LoggerFactory;
  * prior notice.
  *
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultProjectBuildingHelper implements ProjectBuildingHelper {
     private final Logger logger = LoggerFactory.getLogger(getClass());
