@@ -18,14 +18,13 @@
  */
 package org.apache.maven.project.collector;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.Arrays;
 import java.util.List;
 
 import org.apache.maven.DefaultMaven;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.execution.MavenExecutionRequest;
 import org.apache.maven.model.building.ModelSource;
 import org.apache.maven.model.building.UrlModelSource;

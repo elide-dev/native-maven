@@ -18,10 +18,6 @@
  */
 package org.apache.maven.internal.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +25,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.apache.maven.api.JavaPathType;
 import org.apache.maven.api.Type;
 import org.apache.maven.api.annotations.Nonnull;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.LanguageRegistry;
 import org.apache.maven.api.services.Lookup;
 import org.apache.maven.api.services.TypeRegistry;
@@ -41,7 +40,7 @@ import org.apache.maven.impl.resolver.type.DefaultType;
 
 import static java.util.Objects.requireNonNull;
 
-@Named
+@Named("default")
 @Singleton
 public class DefaultTypeRegistry extends AbstractEventSpy implements TypeRegistry {
     private final Lookup lookup;

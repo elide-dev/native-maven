@@ -18,10 +18,9 @@
  */
 package org.apache.maven.artifact.factory;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.DefaultArtifact;
 import org.apache.maven.artifact.handler.ArtifactHandler;
@@ -32,7 +31,7 @@ import org.apache.maven.artifact.versioning.VersionRange;
  * DefaultArtifactFactory
  *
  */
-@Named
+@Named("default")
 @Singleton
 @SuppressWarnings("checkstyle:parameternumber")
 public class DefaultArtifactFactory implements ArtifactFactory {

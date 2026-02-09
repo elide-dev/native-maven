@@ -18,16 +18,15 @@
  */
 package org.apache.maven.lifecycle.internal.builder;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
 import org.apache.maven.api.MonotonicClock;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.BuildFailure;
 import org.apache.maven.execution.ExecutionEvent;

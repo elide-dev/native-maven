@@ -18,9 +18,6 @@
  */
 package org.apache.maven.internal.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
@@ -32,6 +29,8 @@ import org.apache.maven.api.Artifact;
 import org.apache.maven.api.ProducedArtifact;
 import org.apache.maven.api.Service;
 import org.apache.maven.api.annotations.Nonnull;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
 import org.apache.maven.api.di.SessionScoped;
 import org.apache.maven.api.services.ArtifactManager;
 import org.apache.maven.impl.DefaultArtifact;
@@ -46,7 +45,7 @@ import static java.util.Objects.requireNonNull;
  * both {@code ArtifactManager} and {@code Service} interfaces so that it can be retrieved using
  * {@link InternalSession#getAllServices()}.
  */
-@Named
+@Named("default")
 @Typed({ArtifactManager.class, Service.class})
 @SessionScoped
 public class DefaultArtifactManager implements ArtifactManager {

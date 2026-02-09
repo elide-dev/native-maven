@@ -18,13 +18,12 @@
  */
 package org.apache.maven.project;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.File;
 import java.util.List;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.handler.ArtifactHandler;
 import org.apache.maven.artifact.handler.manager.ArtifactHandlerManager;
@@ -36,7 +35,7 @@ import org.codehaus.plexus.logging.AbstractLogEnabled;
  * DefaultMavenProjectHelper
  */
 @SuppressWarnings("deprecation")
-@Named
+@Named("default")
 @Singleton
 public class DefaultMavenProjectHelper extends AbstractLogEnabled implements MavenProjectHelper {
     private final ArtifactHandlerManager artifactHandlerManager;

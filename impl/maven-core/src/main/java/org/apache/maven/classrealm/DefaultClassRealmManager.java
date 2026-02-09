@@ -18,10 +18,6 @@
  */
 package org.apache.maven.classrealm;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.File;
 import java.net.MalformedURLException;
 import java.util.ArrayList;
@@ -35,6 +31,9 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.ArtifactUtils;
 import org.apache.maven.classrealm.ClassRealmRequest.RealmType;
 import org.apache.maven.extension.internal.CoreExports;
@@ -54,7 +53,7 @@ import org.slf4j.LoggerFactory;
  * without prior notice.
  *
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultClassRealmManager implements ClassRealmManager {
     public static final String API_REALMID = "maven.api";

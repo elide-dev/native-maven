@@ -18,10 +18,6 @@
  */
 package org.apache.maven.internal.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +29,9 @@ import java.util.stream.Collectors;
 
 import org.apache.maven.api.Packaging;
 import org.apache.maven.api.Type;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.model.Dependency;
 import org.apache.maven.api.model.InputLocation;
 import org.apache.maven.api.model.Plugin;
@@ -52,7 +51,7 @@ import org.slf4j.LoggerFactory;
 /**
  * TODO: this is session scoped as SPI can contribute.
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultPackagingRegistry
         extends ExtensibleEnumRegistries.DefaultExtensibleEnumRegistry<Packaging, PackagingProvider>

@@ -18,10 +18,6 @@
  */
 package org.apache.maven.project;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -29,6 +25,9 @@ import java.util.Map;
 
 import org.apache.maven.RepositoryUtils;
 import org.apache.maven.api.DependencyScope;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.impl.resolver.RelocatedArtifact;
 import org.apache.maven.model.Dependency;
@@ -56,7 +55,7 @@ import org.slf4j.LoggerFactory;
  * @deprecated use {@code org.apache.maven.api.services.ProjectBuilder} instead
  */
 @Deprecated(since = "4.0.0")
-@Named
+@Named("default")
 @Singleton
 public class DefaultProjectDependenciesResolver implements ProjectDependenciesResolver {
     private final Logger logger = LoggerFactory.getLogger(getClass());

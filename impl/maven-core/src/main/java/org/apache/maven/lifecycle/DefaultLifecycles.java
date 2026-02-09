@@ -18,10 +18,6 @@
  */
 package org.apache.maven.lifecycle;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -30,6 +26,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.LifecycleRegistry;
 import org.apache.maven.api.services.Lookup;
 import org.apache.maven.api.services.LookupException;
@@ -41,7 +40,7 @@ import org.slf4j.LoggerFactory;
  */
 // TODO The configuration for the lifecycle needs to be externalized so that I can use the annotations properly for the
 // wiring and reference and external source for the lifecycle configuration.
-@Named
+@Named("default")
 @Singleton
 public class DefaultLifecycles {
     public static final String[] STANDARD_LIFECYCLES = {"clean", "default", "site"};

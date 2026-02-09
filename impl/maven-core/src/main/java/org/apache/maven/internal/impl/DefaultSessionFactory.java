@@ -18,10 +18,9 @@
  */
 package org.apache.maven.internal.impl;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.Lookup;
 import org.apache.maven.bridge.MavenRepositorySystem;
 import org.apache.maven.execution.MavenSession;
@@ -30,7 +29,7 @@ import org.apache.maven.rtinfo.RuntimeInformation;
 import org.eclipse.aether.RepositorySystem;
 
 @Singleton
-@Named
+@Named("default")
 public class DefaultSessionFactory {
     private final RepositorySystem repositorySystem;
     private final MavenRepositorySystem mavenRepositorySystem;
