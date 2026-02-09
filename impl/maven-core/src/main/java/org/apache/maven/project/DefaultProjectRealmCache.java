@@ -18,15 +18,14 @@
  */
 package org.apache.maven.project;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.codehaus.plexus.classworlds.realm.ClassRealm;
 import org.codehaus.plexus.classworlds.realm.NoSuchRealmException;
 import org.codehaus.plexus.personality.plexus.lifecycle.phase.Disposable;

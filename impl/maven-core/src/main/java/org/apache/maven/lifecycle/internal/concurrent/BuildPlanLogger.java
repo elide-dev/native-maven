@@ -18,8 +18,6 @@
  */
 package org.apache.maven.lifecycle.internal.concurrent;
 
-import javax.inject.Named;
-
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -30,6 +28,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.apache.maven.api.di.Named;
 import org.apache.maven.plugin.MojoExecution;
 import org.apache.maven.project.MavenProject;
 import org.slf4j.Logger;

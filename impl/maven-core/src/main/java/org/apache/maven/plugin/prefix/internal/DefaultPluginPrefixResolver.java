@@ -18,10 +18,6 @@
  */
 package org.apache.maven.plugin.prefix.internal;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -33,6 +29,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.repository.metadata.Metadata;
 import org.apache.maven.artifact.repository.metadata.io.MetadataReader;
 import org.apache.maven.model.Build;

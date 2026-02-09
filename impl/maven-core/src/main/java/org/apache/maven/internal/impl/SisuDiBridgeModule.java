@@ -164,13 +164,19 @@ public class SisuDiBridgeModule extends AbstractModule {
         }
 
         @Override
-        public <Q> Supplier<Q> getCompiledBinding(Dependency<Q> dep) {
+        public <Q> Supplier<Q> doGetCompiledBinding(Dependency<Q> dep) {
             Key<Q> key = dep.key();
             Class<Q> rawType = key.getRawType();
             if (rawType == List.class) {
                 return getListSupplier(key);
             } else if (rawType == Map.class) {
                 return getMapSupplier(key);
+            } else if (rawType == org.apache.maven.api.di.Provider.class) {
+                Key<Object> k = key.getTypeParameter(0);
+                Supplier<Object> supplier = getCompiledBinding(new Dependency<>(k, dep.optional()));
+                org.apache.maven.api.di.Provider<Object> provider = supplier::get;
+                //noinspection unchecked
+                return () -> (Q) provider;
             } else {
                 return getBeanSupplier(dep, key);
             }

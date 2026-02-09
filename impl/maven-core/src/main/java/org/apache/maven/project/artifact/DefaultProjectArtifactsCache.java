@@ -18,9 +18,6 @@
  */
 package org.apache.maven.project.artifact;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -31,6 +28,8 @@ import java.util.Objects;
 import java.util.Set;
 
 import org.apache.maven.RepositoryUtils;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.impl.cache.Cache;
 import org.apache.maven.lifecycle.LifecycleExecutionException;

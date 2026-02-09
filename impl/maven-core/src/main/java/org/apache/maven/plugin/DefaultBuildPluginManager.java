@@ -18,10 +18,6 @@
  */
 package org.apache.maven.plugin;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.List;
@@ -30,6 +26,9 @@ import java.util.function.Supplier;
 
 import org.apache.maven.api.Project;
 import org.apache.maven.api.Service;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.MavenException;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.execution.MojoExecutionEvent;

@@ -18,10 +18,6 @@
  */
 package org.apache.maven.bridge;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -36,6 +32,9 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.maven.RepositoryUtils;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.DefaultArtifact;
 import org.apache.maven.artifact.InvalidRepositoryException;

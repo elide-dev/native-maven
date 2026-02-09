@@ -18,15 +18,14 @@
  */
 package org.apache.maven.lifecycle.internal;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.Collection;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.services.MessageBuilder;
 import org.apache.maven.api.services.MessageBuilderFactory;
 import org.apache.maven.api.xml.XmlNode;
@@ -49,7 +48,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * @since 3.3.1, MNG-5753
  */
-@Named
+@Named("default")
 @Singleton
 public class DefaultMojoExecutionConfigurator implements MojoExecutionConfigurator {
     private final Logger logger = LoggerFactory.getLogger(getClass());

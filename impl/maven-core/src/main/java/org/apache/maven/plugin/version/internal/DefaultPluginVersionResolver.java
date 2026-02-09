@@ -18,10 +18,6 @@
  */
 package org.apache.maven.plugin.version.internal;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -33,6 +29,10 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Provider;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.repository.metadata.Metadata;
 import org.apache.maven.artifact.repository.metadata.Versioning;
 import org.apache.maven.artifact.repository.metadata.io.MetadataReader;
@@ -79,14 +79,14 @@ public class DefaultPluginVersionResolver implements PluginVersionResolver {
     private final Logger logger = LoggerFactory.getLogger(getClass());
     private final RepositorySystem repositorySystem;
     private final MetadataReader metadataReader;
-    private final MavenPluginManager pluginManager;
+    private final Provider<MavenPluginManager> pluginManager;
     private final VersionScheme versionScheme;
 
     @Inject
     public DefaultPluginVersionResolver(
             RepositorySystem repositorySystem,
             MetadataReader metadataReader,
-            MavenPluginManager pluginManager,
+            Provider<MavenPluginManager> pluginManager,
             VersionScheme versionScheme) {
         this.repositorySystem = repositorySystem;
         this.metadataReader = metadataReader;
@@ -279,8 +279,9 @@ public class DefaultPluginVersionResolver implements PluginVersionResolver {
         PluginDescriptor pluginDescriptor;
 
         try {
-            pluginDescriptor = pluginManager.getPluginDescriptor(
-                    plugin, request.getRepositories(), request.getRepositorySession());
+            pluginDescriptor = pluginManager
+                    .get()
+                    .getPluginDescriptor(plugin, request.getRepositories(), request.getRepositorySession());
         } catch (PluginResolutionException e) {
             logger.debug("Ignoring unresolvable plugin version {}", version, e);
             return false;
@@ -290,7 +291,7 @@ public class DefaultPluginVersionResolver implements PluginVersionResolver {
         }
 
         try {
-            pluginManager.checkPrerequisites(pluginDescriptor);
+            pluginManager.get().checkPrerequisites(pluginDescriptor);
         } catch (PluginIncompatibleException e) {
             if (logger.isDebugEnabled()) {
                 logger.warn("Ignoring incompatible plugin version {}:", version, e);

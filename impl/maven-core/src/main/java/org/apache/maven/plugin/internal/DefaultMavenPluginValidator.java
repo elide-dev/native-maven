@@ -18,11 +18,10 @@
  */
 package org.apache.maven.plugin.internal;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.util.List;
 
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.descriptor.PluginDescriptor;
 

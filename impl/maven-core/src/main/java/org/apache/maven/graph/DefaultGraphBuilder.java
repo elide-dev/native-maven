@@ -18,10 +18,6 @@
  */
 package org.apache.maven.graph;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,6 +30,9 @@ import java.util.Set;
 
 import org.apache.maven.MavenExecutionException;
 import org.apache.maven.ProjectCycleException;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.artifact.ArtifactUtils;
 import org.apache.maven.execution.BuildResumptionDataRepository;
 import org.apache.maven.execution.MavenExecutionRequest;
