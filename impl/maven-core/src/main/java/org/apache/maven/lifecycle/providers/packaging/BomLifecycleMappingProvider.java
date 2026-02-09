@@ -18,9 +18,11 @@
  */
 package org.apache.maven.lifecycle.providers.packaging;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Provides;
+import org.apache.maven.api.di.Singleton;
+import org.apache.maven.lifecycle.mapping.LifecycleMapping;
 
 /**
  * {@code bom} packaging plugins bindings provider for {@code default} lifecycle.
@@ -38,5 +40,11 @@ public final class BomLifecycleMappingProvider extends AbstractLifecycleMappingP
     @Inject
     public BomLifecycleMappingProvider() {
         super(BINDINGS);
+    }
+
+    @Provides
+    @Named("bom")
+    public LifecycleMapping getLifecycleMapping() {
+        return get();
     }
 }

@@ -18,8 +18,6 @@
  */
 package org.apache.maven.lifecycle.providers.packaging;
 
-import javax.inject.Provider;
-
 import java.util.Collections;
 import java.util.HashMap;
 
@@ -33,7 +31,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * Base lifecycle mapping provider, ie per-packaging plugin bindings for {@code default} lifecycle.
  */
-public abstract class AbstractLifecycleMappingProvider implements Provider<LifecycleMapping> {
+public abstract class AbstractLifecycleMappingProvider {
     // START SNIPPET: versions
     protected static final String RESOURCES_PLUGIN_VERSION = "3.3.1";
 
@@ -81,8 +79,7 @@ public abstract class AbstractLifecycleMappingProvider implements Provider<Lifec
         this.lifecycleMapping = new DefaultLifecycleMapping(Collections.singletonList(lifecycle));
     }
 
-    @Override
-    public LifecycleMapping get() {
+    protected LifecycleMapping get() {
         return lifecycleMapping;
     }
 }

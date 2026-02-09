@@ -18,9 +18,11 @@
  */
 package org.apache.maven.lifecycle.providers.packaging;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Singleton;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Provides;
+import org.apache.maven.api.di.Singleton;
+import org.apache.maven.lifecycle.mapping.LifecycleMapping;
 
 /**
  * {@code ear} packaging plugins bindings provider for {@code default} lifecycle.
@@ -43,5 +45,11 @@ public final class EarLifecycleMappingProvider extends AbstractLifecycleMappingP
     @Inject
     public EarLifecycleMappingProvider() {
         super(BINDINGS);
+    }
+
+    @Provides
+    @Named("ear")
+    public LifecycleMapping getLifecycleMapping() {
+        return get();
     }
 }

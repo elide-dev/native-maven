@@ -36,7 +36,7 @@ import org.apache.maven.api.DependencyScope;
 import org.apache.maven.api.Lifecycle;
 import org.apache.maven.api.di.Inject;
 import org.apache.maven.api.di.Named;
-import org.apache.maven.api.di.Provider;
+import org.apache.maven.api.di.Provides;
 import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.model.InputLocation;
 import org.apache.maven.api.model.InputSource;
@@ -307,7 +307,7 @@ public class DefaultLifecycleRegistry implements LifecycleRegistry {
         }
     }
 
-    abstract static class BaseLifecycleProvider implements Provider<org.apache.maven.lifecycle.Lifecycle> {
+    abstract static class BaseLifecycleProvider {
         @Inject
         private PlexusContainer lookup;
 
@@ -317,8 +317,7 @@ public class DefaultLifecycleRegistry implements LifecycleRegistry {
             this.name = name;
         }
 
-        @Override
-        public org.apache.maven.lifecycle.Lifecycle get() {
+        protected org.apache.maven.lifecycle.Lifecycle get() {
             try {
                 LifecycleRegistry registry = lookup.lookup(LifecycleRegistry.class);
                 return new WrappedLifecycle(registry, registry.require(name));
@@ -335,6 +334,12 @@ public class DefaultLifecycleRegistry implements LifecycleRegistry {
         CleanLifecycleProvider() {
             super(Lifecycle.CLEAN);
         }
+
+        @Provides
+        @Named(Lifecycle.CLEAN)
+        public org.apache.maven.lifecycle.Lifecycle getLifecycle() {
+            return get();
+        }
     }
 
     @Singleton
@@ -344,6 +349,12 @@ public class DefaultLifecycleRegistry implements LifecycleRegistry {
         DefaultLifecycleProvider() {
             super(Lifecycle.DEFAULT);
         }
+
+        @Provides
+        @Named(Lifecycle.DEFAULT)
+        public org.apache.maven.lifecycle.Lifecycle getLifecycle() {
+            return get();
+        }
     }
 
     @Singleton
@@ -352,6 +363,12 @@ public class DefaultLifecycleRegistry implements LifecycleRegistry {
     static class SiteLifecycleProvider extends BaseLifecycleProvider {
         SiteLifecycleProvider() {
             super(Lifecycle.SITE);
+        }
+
+        @Provides
+        @Named(Lifecycle.SITE)
+        public org.apache.maven.lifecycle.Lifecycle getLifecycle() {
+            return get();
         }
     }
 

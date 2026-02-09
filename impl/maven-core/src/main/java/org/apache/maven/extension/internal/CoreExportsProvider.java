@@ -18,13 +18,12 @@
  */
 package org.apache.maven.extension.internal;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Provider;
-import javax.inject.Singleton;
-
 import java.util.Objects;
 
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Provides;
+import org.apache.maven.api.di.Singleton;
 import org.apache.maven.internal.CoreRealm;
 
 /**
@@ -32,7 +31,7 @@ import org.apache.maven.internal.CoreRealm;
  */
 @Named
 @Singleton
-public class CoreExportsProvider implements Provider<CoreExports> {
+public class CoreExportsProvider {
 
     private final CoreExports exports;
 
@@ -45,7 +44,7 @@ public class CoreExportsProvider implements Provider<CoreExports> {
         this.exports = Objects.requireNonNull(exports);
     }
 
-    @Override
+    @Provides
     public CoreExports get() {
         return exports;
     }

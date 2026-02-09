@@ -18,8 +18,6 @@
  */
 package org.apache.maven.lifecycle.providers;
 
-import javax.inject.Provider;
-
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -31,7 +29,7 @@ import org.apache.maven.lifecycle.mapping.LifecyclePhase;
 /**
  * Base lifecycle provider.
  */
-public abstract class AbstractLifecycleProvider implements Provider<Lifecycle> {
+public abstract class AbstractLifecycleProvider {
     private final Lifecycle lifecycle;
 
     protected AbstractLifecycleProvider(String id, String[] phases, String[] pluginBindings) {
@@ -56,8 +54,7 @@ public abstract class AbstractLifecycleProvider implements Provider<Lifecycle> {
                 defaultBindings == null ? null : Collections.unmodifiableMap(defaultBindings));
     }
 
-    @Override
-    public Lifecycle get() {
+    protected Lifecycle get() {
         return lifecycle;
     }
 }
