@@ -87,7 +87,7 @@ under the License.
     <proxy.user />
     <proxy.pass />
     <proxy.nonProxyHosts>localhost</proxy.nonProxyHosts>
-    <jetty9Version>9.4.57.v20241219</jetty9Version>
+    <jetty9Version>12.1.6</jetty9Version>
 
     <stubPluginVersion>0.1-stub-SNAPSHOT</stubPluginVersion>
     <!-- Support artifacts version - kept separate from Maven version -->
