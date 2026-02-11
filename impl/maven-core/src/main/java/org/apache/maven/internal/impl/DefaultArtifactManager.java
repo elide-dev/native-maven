@@ -32,11 +32,11 @@ import org.apache.maven.api.annotations.Nonnull;
 import org.apache.maven.api.di.Inject;
 import org.apache.maven.api.di.Named;
 import org.apache.maven.api.di.SessionScoped;
+import org.apache.maven.api.di.Typed;
 import org.apache.maven.api.services.ArtifactManager;
 import org.apache.maven.impl.DefaultArtifact;
 import org.apache.maven.impl.InternalSession;
 import org.apache.maven.project.MavenProject;
-import org.eclipse.sisu.Typed;
 
 import static java.util.Objects.requireNonNull;
 

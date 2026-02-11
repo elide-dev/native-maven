@@ -527,7 +527,7 @@ public abstract class LookupInvoker<C extends LookupContext> implements Invoker 
     }
 
     protected ContainerCapsuleFactory<C> createContainerCapsuleFactory() {
-        return new PlexusContainerCapsuleFactory<>();
+        return new MavenDiContainerCapsuleFactory<>();
     }
 
     protected void postContainer(C context) throws Exception {

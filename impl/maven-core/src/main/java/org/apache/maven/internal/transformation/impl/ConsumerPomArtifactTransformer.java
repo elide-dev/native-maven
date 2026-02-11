@@ -34,6 +34,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 
 import org.apache.maven.api.di.Inject;
 import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.PreDestroy;
 import org.apache.maven.api.di.Singleton;
 import org.apache.maven.api.feature.Features;
 import org.apache.maven.api.model.Model;
@@ -48,7 +49,6 @@ import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.deployment.DeployRequest;
 import org.eclipse.aether.installation.InstallRequest;
-import org.eclipse.sisu.PreDestroy;
 
 /**
  * Consumer POM transformer.
