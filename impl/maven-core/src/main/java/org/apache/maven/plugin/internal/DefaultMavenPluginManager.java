@@ -29,9 +29,9 @@ import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Enumeration;
@@ -59,6 +59,7 @@ import org.apache.maven.api.services.PathScopeRegistry;
 import org.apache.maven.api.xml.XmlNode;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.classrealm.ClassRealmManager;
+import org.apache.maven.configuration.internal.EnhancedComponentConfigurator;
 import org.apache.maven.di.Injector;
 import org.apache.maven.di.Key;
 import org.apache.maven.execution.MavenSession;
@@ -219,8 +220,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
     private Map<String, URL> scanClasspathPlugins() {
         Map<String, URL> result = new HashMap<>();
         try {
-            Enumeration<URL> urls =
-                    getClass().getClassLoader().getResources(getPluginDescriptorLocation());
+            Enumeration<URL> urls = getClass().getClassLoader().getResources(getPluginDescriptorLocation());
             while (urls.hasMoreElements()) {
                 URL url = urls.nextElement();
                 try {
@@ -246,22 +246,39 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         PluginDescriptorCache.Key cacheKey = pluginDescriptorCache.createKey(plugin, repositories, session);
 
         PluginDescriptor pluginDescriptor = pluginDescriptorCache.get(cacheKey, () -> {
-            org.eclipse.aether.artifact.Artifact artifact =
-                    pluginDependenciesResolver.resolve(plugin, repositories, session);
-
-            Artifact pluginArtifact = RepositoryUtils.toArtifact(artifact);
-
-            PluginDescriptor descriptor = extractPluginDescriptor(pluginArtifact, plugin);
-
-            boolean isBlankVersion = descriptor.getRequiredMavenVersion() == null
-                    || descriptor.getRequiredMavenVersion().trim().isEmpty();
-
-            if (isBlankVersion) {
-                // only take value from underlying POM if plugin descriptor has no explicit Maven requirement
-                descriptor.setRequiredMavenVersion(artifact.getProperty("requiredMavenVersion", null));
+            URL classpathDescriptorUrl = getClasspathPluginDescriptorUrl(plugin);
+            if (classpathDescriptorUrl != null) {
+                // Plugin is on the classpath — parse descriptor directly, skip remote resolution
+                logger.debug(
+                        "Loading plugin descriptor for {} from classpath: {}", plugin.getId(), classpathDescriptorUrl);
+                return parsePluginDescriptor(
+                        classpathDescriptorUrl::openStream, plugin, classpathDescriptorUrl.toString());
             }
 
-            return descriptor;
+            throw new PluginResolutionException(
+                    plugin,
+                    List.of(new IllegalStateException(
+                            "Plugin " + plugin.getId() + " is not available on the classpath. "
+                                    + "Only classpath-bundled plugins are supported.")),
+                    null);
+
+            // TODO: re-enable remote resolution when fallback is desired
+            // org.eclipse.aether.artifact.Artifact artifact =
+            //         pluginDependenciesResolver.resolve(plugin, repositories, session);
+            //
+            // Artifact pluginArtifact = RepositoryUtils.toArtifact(artifact);
+            //
+            // PluginDescriptor descriptor = extractPluginDescriptor(pluginArtifact, plugin);
+            //
+            // boolean isBlankVersion = descriptor.getRequiredMavenVersion() == null
+            //         || descriptor.getRequiredMavenVersion().trim().isEmpty();
+            //
+            // if (isBlankVersion) {
+            //     // only take value from underlying POM if plugin descriptor has no explicit Maven requirement
+            //     descriptor.setRequiredMavenVersion(artifact.getProperty("requiredMavenVersion", null));
+            // }
+            //
+            // return descriptor;
         });
 
         pluginDescriptor.setPlugin(plugin);
@@ -406,32 +423,61 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
 
             pluginDescriptor.setClassRealm(pluginRealm);
             pluginDescriptor.setArtifacts(pluginArtifacts);
-        } else {
-            boolean v4api = pluginDescriptor.getMojos().stream().anyMatch(MojoDescriptor::isV4Api);
-            Map<String, ClassLoader> foreignImports = calcImports(project, parent, imports, v4api);
-
-            PluginRealmCache.Key cacheKey = pluginRealmCache.createKey(
-                    plugin,
-                    parent,
-                    foreignImports,
-                    filter,
-                    project.getRemotePluginRepositories(),
-                    session.getRepositorySession());
-
-            PluginRealmCache.CacheRecord cacheRecord = pluginRealmCache.get(cacheKey, () -> {
-                createPluginRealm(pluginDescriptor, session, parent, foreignImports, filter);
-
-                return new PluginRealmCache.CacheRecord(
-                        pluginDescriptor.getClassRealm(), pluginDescriptor.getArtifacts());
-            });
-
-            pluginDescriptor.setClassRealm(cacheRecord.getRealm());
-            pluginDescriptor.setArtifacts(new ArrayList<>(cacheRecord.getArtifacts()));
-            for (ComponentDescriptor<?> componentDescriptor : pluginDescriptor.getComponents()) {
-                componentDescriptor.setRealm(cacheRecord.getRealm());
+        } else if (getClasspathPluginDescriptorUrl(plugin) != null) {
+            // Plugin is on the classpath — use the system classloader directly (no ClassRealm).
+            // Only V4 API plugins are supported on the classpath path.
+            boolean allV4 = pluginDescriptor.getMojos().stream().allMatch(MojoDescriptor::isV4Api);
+            logger.info(
+                    "Classpath plugin {} — mojos: {}, allV4: {}",
+                    plugin.getId(),
+                    pluginDescriptor.getMojos().stream()
+                            .map(m -> m.getGoal() + "(v4=" + m.isV4Api() + ")")
+                            .collect(java.util.stream.Collectors.joining(", ")),
+                    allV4);
+            if (!allV4) {
+                throw new PluginContainerException(
+                        plugin,
+                        null,
+                        "Classpath plugin " + plugin.getId()
+                                + " contains V3 API mojos. Only V4 API plugins are supported on the classpath.",
+                        (Throwable) null);
             }
 
-            pluginRealmCache.register(project, cacheKey, cacheRecord);
+            pluginDescriptor.setClassLoader(getClass().getClassLoader());
+            pluginDescriptor.setArtifacts(List.of());
+        } else {
+            // TODO: re-enable when fallback to remote resolution is desired
+            throw new PluginResolutionException(
+                    plugin,
+                    List.of(new IllegalStateException(
+                            "Plugin " + plugin.getId() + " is not available on the classpath.")),
+                    null);
+
+            // boolean v4api = pluginDescriptor.getMojos().stream().anyMatch(MojoDescriptor::isV4Api);
+            // Map<String, ClassLoader> foreignImports = calcImports(project, parent, imports, v4api);
+            //
+            // PluginRealmCache.Key cacheKey = pluginRealmCache.createKey(
+            //         plugin,
+            //         parent,
+            //         foreignImports,
+            //         filter,
+            //         project.getRemotePluginRepositories(),
+            //         session.getRepositorySession());
+            //
+            // PluginRealmCache.CacheRecord cacheRecord = pluginRealmCache.get(cacheKey, () -> {
+            //     createPluginRealm(pluginDescriptor, session, parent, foreignImports, filter);
+            //
+            //     return new PluginRealmCache.CacheRecord(
+            //             pluginDescriptor.getClassRealm(), pluginDescriptor.getArtifacts());
+            // });
+            //
+            // pluginDescriptor.setClassRealm(cacheRecord.getRealm());
+            // pluginDescriptor.setArtifacts(new ArrayList<>(cacheRecord.getArtifacts()));
+            // for (ComponentDescriptor<?> componentDescriptor : pluginDescriptor.getComponents()) {
+            //     componentDescriptor.setRealm(cacheRecord.getRealm());
+            // }
+            //
+            // pluginRealmCache.register(project, cacheKey, cacheRecord);
         }
     }
 
@@ -547,9 +593,11 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
 
         PluginDescriptor pluginDescriptor = mojoDescriptor.getPluginDescriptor();
 
+        ClassLoader pluginClassLoader = pluginDescriptor.getPluginClassLoader();
         ClassRealm pluginRealm = pluginDescriptor.getClassRealm();
 
-        if (pluginRealm == null) {
+        if (pluginClassLoader == null) {
+            // Neither classLoader nor classRealm set — trigger setup
             try {
                 setupPluginRealm(pluginDescriptor, session, null, null, null);
             } catch (PluginResolutionException e) {
@@ -557,30 +605,33 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                         + ", pluginDescriptor=" + pluginDescriptor.getId() + "]";
                 throw new PluginConfigurationException(pluginDescriptor, msg, e);
             }
+            pluginClassLoader = pluginDescriptor.getPluginClassLoader();
             pluginRealm = pluginDescriptor.getClassRealm();
         }
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Loading mojo " + mojoDescriptor.getId() + " from plugin realm " + pluginRealm);
+            logger.debug("Loading mojo " + mojoDescriptor.getId() + " from plugin classloader " + pluginClassLoader);
         }
 
-        // We are forcing the use of the plugin realm for all lookups that might occur during
-        // the lifecycle that is part of the lookup. Here we are specifically trying to keep
-        // lookups that occur in contextualize calls in line with the right realm.
-        ClassRealm oldLookupRealm = container.setLookupRealm(pluginRealm);
-
         ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(pluginRealm);
+        Thread.currentThread().setContextClassLoader(pluginClassLoader);
+
+        // For ClassRealm-based plugins (V3), set the Plexus lookup realm.
+        // For classpath plugins (V4 only, no ClassRealm), skip Plexus lookup realm.
+        ClassRealm oldLookupRealm = pluginRealm != null ? container.setLookupRealm(pluginRealm) : null;
 
         try {
             if (mojoDescriptor.isV4Api()) {
-                return loadV4Mojo(mojoInterface, session, mojoExecution, mojoDescriptor, pluginDescriptor, pluginRealm);
+                return loadV4Mojo(
+                        mojoInterface, session, mojoExecution, mojoDescriptor, pluginDescriptor, pluginClassLoader);
             } else {
                 return loadV3Mojo(mojoInterface, session, mojoExecution, mojoDescriptor, pluginDescriptor, pluginRealm);
             }
         } finally {
             Thread.currentThread().setContextClassLoader(oldClassLoader);
-            container.setLookupRealm(oldLookupRealm);
+            if (oldLookupRealm != null) {
+                container.setLookupRealm(oldLookupRealm);
+            }
         }
     }
 
@@ -590,7 +641,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             MojoExecution mojoExecution,
             MojoDescriptor mojoDescriptor,
             PluginDescriptor pluginDescriptor,
-            ClassRealm pluginRealm)
+            ClassLoader pluginClassLoader)
             throws PluginContainerException, PluginConfigurationException {
         T mojo;
 
@@ -602,7 +653,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                 LoggerFactory.getLogger(mojoExecution.getMojoDescriptor().getFullGoalName()));
         try {
             Injector injector = Injector.create();
-            injector.discover(pluginRealm);
+            injector.discover(pluginClassLoader);
             // Add known classes
             // TODO: get those from the existing plexus scopes ?
             injector.bindInstance(Session.class, sessionV4);
@@ -613,11 +664,18 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             Map<Class<? extends Service>, Supplier<? extends Service>> services = sessionV4.getAllServices();
             services.forEach((itf, svc) -> injector.bindSupplier((Class<Service>) itf, (Supplier<Service>) svc));
 
-            mojo = mojoInterface.cast(injector.getInstance(
-                    Key.of(mojoDescriptor.getImplementationClass(), mojoDescriptor.getRoleHint())));
+            // Load implementation class explicitly via pluginClassLoader.
+            // mojoDescriptor.getImplementationClass() uses the descriptor's ClassRealm,
+            // which is null for classpath plugins, so we load it ourselves.
+            Class<?> implClass = mojoDescriptor.getImplementationClass();
+            if (implClass == null) {
+                implClass = pluginClassLoader.loadClass(mojoDescriptor.getImplementation());
+            }
+            mojo = mojoInterface.cast(injector.getInstance(Key.of(implClass, mojoDescriptor.getRoleHint())));
 
         } catch (Exception e) {
-            throw new PluginContainerException(mojoDescriptor, pluginRealm, "Unable to lookup Mojo", e);
+            throw new PluginContainerException(
+                    mojoDescriptor, pluginDescriptor.getClassRealm(), "Unable to lookup Mojo", e);
         }
 
         XmlNode dom = mojoExecution.getConfiguration() != null
@@ -643,7 +701,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                 mojo,
                 mojoExecution.getExecutionId(),
                 mojoDescriptor,
-                pluginRealm,
+                pluginClassLoader,
                 pomConfiguration,
                 expressionEvaluator);
 
@@ -913,6 +971,51 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                     logger.debug("Failed to release mojo configurator - ignoring.");
                 }
             }
+        }
+    }
+
+    /**
+     * ClassLoader-based overload for V4 classpath plugins that don't have a ClassRealm.
+     * Uses EnhancedComponentConfigurator's ClassLoader-accepting method directly.
+     */
+    private void populateMojoExecutionFields(
+            Object mojo,
+            String executionId,
+            MojoDescriptor mojoDescriptor,
+            ClassLoader classLoader,
+            PlexusConfiguration configuration,
+            ExpressionEvaluator expressionEvaluator)
+            throws PluginConfigurationException {
+        try {
+            EnhancedComponentConfigurator configurator = new EnhancedComponentConfigurator();
+
+            ConfigurationListener listener = new DebugConfigurationListener(logger);
+
+            ValidatingConfigurationListener validator =
+                    new ValidatingConfigurationListener(mojo, mojoDescriptor, listener);
+
+            if (logger.isDebugEnabled()) {
+                logger.debug("Configuring mojo execution '" + mojoDescriptor.getId() + ':' + executionId
+                        + "' with enhanced configurator (classpath mode) -->");
+            }
+
+            configurator.configureComponent(mojo, configuration, expressionEvaluator, classLoader, validator);
+
+            logger.debug("-- end configuration --");
+
+            Collection<Parameter> missingParameters = validator.getMissingParameters();
+            if (!missingParameters.isEmpty()) {
+                validateParameters(mojoDescriptor, configuration, expressionEvaluator);
+            }
+
+        } catch (ComponentConfigurationException e) {
+            String message = "Unable to parse configuration of mojo " + mojoDescriptor.getId();
+            if (e.getFailedConfiguration() != null) {
+                message += " for parameter " + e.getFailedConfiguration().getName();
+            }
+            message += ": " + e.getMessage();
+
+            throw new PluginConfigurationException(mojoDescriptor.getPluginDescriptor(), message, e);
         }
     }
 
