@@ -31,8 +31,10 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -193,6 +195,48 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         this.configurationValidators = configurationValidators;
         this.pluginValidationManager = pluginValidationManager;
         this.prerequisitesCheckers = prerequisitesCheckers;
+    }
+
+    // -- Classpath plugin registry --
+
+    private volatile Map<String, URL> classpathPlugins;
+
+    /**
+     * Returns the classpath URL of the plugin descriptor if this plugin is available on the classpath,
+     * or {@code null} if it needs to be resolved from a remote repository.
+     */
+    private URL getClasspathPluginDescriptorUrl(Plugin plugin) {
+        if (classpathPlugins == null) {
+            synchronized (this) {
+                if (classpathPlugins == null) {
+                    classpathPlugins = scanClasspathPlugins();
+                }
+            }
+        }
+        return classpathPlugins.get(plugin.getGroupId() + ":" + plugin.getArtifactId());
+    }
+
+    private Map<String, URL> scanClasspathPlugins() {
+        Map<String, URL> result = new HashMap<>();
+        try {
+            Enumeration<URL> urls =
+                    getClass().getClassLoader().getResources(getPluginDescriptorLocation());
+            while (urls.hasMoreElements()) {
+                URL url = urls.nextElement();
+                try {
+                    PluginDescriptor descriptor = builder.build(url::openStream, url.toString());
+                    String key = descriptor.getGroupId() + ":" + descriptor.getArtifactId();
+                    result.put(key, url);
+                    logger.debug("Found classpath plugin: {}", key);
+                } catch (Exception e) {
+                    logger.debug("Failed to parse classpath plugin descriptor at {}", url, e);
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("Failed to scan classpath for plugin descriptors", e);
+        }
+        logger.info("Classpath plugins available: {}", result.keySet());
+        return result;
     }
 
     @Override
