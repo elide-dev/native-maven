@@ -190,6 +190,9 @@ public class DefaultBuildPluginManager implements BuildPluginManager {
             Exception wrapper = new PluginContainerException(mojoDescriptor, pluginRealm, os.toString(), e);
             throw new PluginExecutionException(mojoExecution, project, wrapper);
         } catch (LinkageError e) {
+            // TODO: temporary debug logging for classpath plugin development
+            System.err.println("=== MOJO EXECUTION FAILED (LinkageError) ===");
+            e.printStackTrace(System.err);
             mojoExecutionListener.afterExecutionFailure(
                     new MojoExecutionEvent(session, project, mojoExecution, mojo, e));
             ByteArrayOutputStream os = new ByteArrayOutputStream(1024);
