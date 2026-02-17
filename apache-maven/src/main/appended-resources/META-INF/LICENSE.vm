@@ -44,18 +44,20 @@ subject to the terms and conditions of the following licenses:
                     || $license.url.contains( "https://raw.github.com/hunterhacker/jdom/master/LICENSE.txt" ) )
 #*      *##set ( $spdx = 'Apache-2.0' )
 #*    *##elseif ( $license.name == "BSD-2-Clause" || $license.name == "The BSD 2-Clause License"
-                    || $license.url.contains( "www.opensource.org/licenses/bsd-license" ) )
+                    || $license.name == "BSD 2-Clause License"
+                    || $license.url.contains( "www.opensource.org/licenses/bsd-license" )
+                    || $license.url.contains( "opensource.org/licenses/BSD-2-Clause" ) )
 #*      *##set ( $spdx = 'BSD-2-Clause' )
 #*    *##elseif ( $license.name == "BSD-3-Clause"
                     || $license.url.contains( "opensource.org/licenses/BSD-3-Clause" ) )
 #*      *##set ( $spdx = 'BSD-3-Clause' )
-#*    *##elseif ( $license.name == "Public Domain" )
+#*    *##elseif ( $license.name == "Public Domain" || $license.name == "0BSD" )
 #*      *##set ( $spdx = 'Public-Domain' )
 #*    *##elseif ( $license.name == "CDDL + GPLv2 with classpath exception" )
 #*      *##set ( $spdx = 'CDDL+GPLv2-with-classpath-exception' )
 #*    *##else
 #*      *### unrecognized license will require analysis to know obligations
-#*      *##set ( $spdx = $license )
+#*      *##set ( $spdx = $license.name )
 #*    *##end
 #*    *###
 #*    *### fix project urls that are wrong in pom

@@ -424,8 +424,11 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             pluginDescriptor.setClassRealm(pluginRealm);
             pluginDescriptor.setArtifacts(pluginArtifacts);
         } else if (getClasspathPluginDescriptorUrl(plugin) != null) {
-            // Plugin is on the classpath — use the system classloader directly (no ClassRealm).
-            // Only V4 API plugins are supported on the classpath path.
+            // Classpath plugin: all classes are on the flat classpath, no remote resolution,
+            // no isolated ClassRealm with dynamic JAR loading.
+            // Supported: JSR-330 based plugins (@Named, @Inject).
+            // NOT supported: legacy Plexus plugins (@Component, @Requirement) — these require
+            // discoverComponents() with a dedicated ClassRealm, which is not available here.
             boolean allV4 = pluginDescriptor.getMojos().stream().allMatch(MojoDescriptor::isV4Api);
             logger.info(
                     "Classpath plugin {} — mojos: {}, allV4: {}",
@@ -434,16 +437,35 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                             .map(m -> m.getGoal() + "(v4=" + m.isV4Api() + ")")
                             .collect(java.util.stream.Collectors.joining(", ")),
                     allV4);
-            if (!allV4) {
-                throw new PluginContainerException(
-                        plugin,
-                        null,
-                        "Classpath plugin " + plugin.getId()
-                                + " contains V3 API mojos. Only V4 API plugins are supported on the classpath.",
-                        (Throwable) null);
-            }
 
-            pluginDescriptor.setClassLoader(getClass().getClassLoader());
+            if (allV4) {
+                // V4 plugins: use plain ClassLoader, no ClassRealm needed.
+                // V4 mojos are instantiated via Maven DI Injector.discover(ClassLoader).
+                pluginDescriptor.setClassLoader(getClass().getClassLoader());
+            } else {
+                // V3 plugins: use containerRealm (core realm) as a thin wrapper.
+                // No URLs are added — all class loading delegates to the app classloader.
+                // Register V3 mojos in the Plexus container so container.lookup() finds them.
+                // NOTE: discoverComponents() is NOT called — plugin @Named classes are already
+                // discovered from the flat classpath during container startup.
+                // Legacy Plexus plugins using @Component/@Requirement are NOT supported.
+                ClassRealm coreRealm = classRealmManager.getCoreRealm();
+                try {
+                    for (MojoDescriptor mojo : pluginDescriptor.getMojos()) {
+                        if (!mojo.isV4Api()) {
+                            mojo.setRealm(coreRealm);
+                            container.addComponentDescriptor(mojo);
+                        }
+                    }
+                } catch (CycleDetectedInComponentGraphException e) {
+                    throw new PluginContainerException(
+                            plugin,
+                            coreRealm,
+                            "Error in component graph of plugin " + plugin.getId() + ": " + e.getMessage(),
+                            e);
+                }
+                pluginDescriptor.setClassRealm(coreRealm);
+            }
             pluginDescriptor.setArtifacts(List.of());
         } else {
             // TODO: re-enable when fallback to remote resolution is desired
@@ -481,6 +503,11 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         }
     }
 
+    /**
+     * Creates an isolated ClassRealm for a remotely-resolved plugin.
+     * NOT used for classpath plugins. Legacy Plexus plugins that require isolated realms
+     * with dynamic JAR loading are not supported in the classpath-only mode.
+     */
     private void createPluginRealm(
             PluginDescriptor pluginDescriptor,
             MavenSession session,
@@ -521,6 +548,13 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         pluginDescriptor.setArtifacts(pluginArtifacts);
     }
 
+    /**
+     * Discovers plugin components by scanning the given ClassRealm.
+     * This is used for remotely-resolved plugins that have their own isolated ClassRealm.
+     * NOT used for classpath plugins — their classes are already on the flat classpath
+     * and discovered during container startup. Legacy Plexus plugins (@Component/@Requirement)
+     * that require this method are not supported on the classpath.
+     */
     private void discoverPluginComponents(
             final ClassRealm pluginRealm, Plugin plugin, PluginDescriptor pluginDescriptor)
             throws PluginContainerException {
@@ -781,6 +815,12 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         return mojo;
     }
 
+    /**
+     * Loads a V3 mojo via Plexus container lookup.
+     * For classpath plugins, the mojo must be JSR-330 based (@Named, @Inject).
+     * Legacy Plexus plugins using @Component/@Requirement are NOT supported on the classpath
+     * — they require discoverComponents() with an isolated ClassRealm.
+     */
     private <T> T loadV3Mojo(
             Class<T> mojoInterface,
             MavenSession session,
@@ -848,6 +888,16 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         }
 
         if (mojo instanceof Contextualizable) {
+            // Contextualizable is a legacy Plexus interface — not supported for classpath plugins.
+            if (pluginDescriptor.getClassRealm() == classRealmManager.getCoreRealm()) {
+                throw new PluginContainerException(
+                        mojoDescriptor,
+                        pluginRealm,
+                        "Mojo '" + mojoDescriptor.getGoal() + "' in plugin '" + pluginDescriptor.getId()
+                                + "' implements legacy Plexus Contextualizable interface, "
+                                + "which is not supported for classpath plugins.",
+                        (Throwable) null);
+            }
             pluginValidationManager.reportPluginMojoValidationIssue(
                     PluginValidationManager.IssueLocality.EXTERNAL,
                     session,
