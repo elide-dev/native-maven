@@ -255,55 +255,66 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             if (classpathArtifactsCache != null) {
                 return classpathArtifactsCache;
             }
-            List<Artifact> artifacts = new ArrayList<>();
             String mavenHome = System.getProperty("maven.home");
             if (mavenHome == null) {
-                logger.warn("maven.home not set, cannot build classpath artifacts list");
-                classpathArtifactsCache = List.of();
-                return classpathArtifactsCache;
+                throw new IllegalStateException("maven.home not set, cannot build classpath artifacts list");
             }
             Path libDir = Path.of(mavenHome, "lib");
             if (!Files.isDirectory(libDir)) {
-                logger.warn("maven.home/lib not found: {}", libDir);
-                classpathArtifactsCache = List.of();
-                return classpathArtifactsCache;
+                throw new IllegalStateException("maven.home/lib not found: " + libDir);
             }
-            try (var jars = Files.list(libDir)) {
-                for (Path jarPath :
-                        jars.filter(p -> p.toString().endsWith(".jar")).toList()) {
-                    try (JarFile jarFile = new JarFile(jarPath.toFile(), false)) {
-                        // Find pom.properties inside the JAR
-                        var pomProps = jarFile.stream()
-                                .filter(e -> e.getName().startsWith("META-INF/maven/")
-                                        && e.getName().endsWith("/pom.properties"))
-                                .findFirst();
-                        if (pomProps.isPresent()) {
-                            var props = new java.util.Properties();
-                            props.load(jarFile.getInputStream(pomProps.get()));
-                            String groupId = props.getProperty("groupId");
-                            String artifactId = props.getProperty("artifactId");
-                            String version = props.getProperty("version");
-                            if (groupId != null && artifactId != null && version != null) {
-                                var artifact = new org.apache.maven.artifact.DefaultArtifact(
-                                        groupId,
-                                        artifactId,
-                                        version,
-                                        "compile",
-                                        "jar",
-                                        null,
-                                        new org.apache.maven.artifact.handler.DefaultArtifactHandler("jar"));
-                                artifact.setFile(jarPath.toFile());
-                                artifacts.add(artifact);
-                            }
-                        }
-                    } catch (Exception e) {
-                        logger.debug("Failed to read pom.properties from {}: {}", jarPath, e.getMessage());
+
+            // Surefire looks up these 7 artifacts by groupId:artifactId in
+            // pluginArtifactMap. We locate each JAR in lib/ by filename.
+            String[][] surefireArtifacts = {
+                {"org.apache.maven.surefire", "maven-surefire-common"},
+                {"org.apache.maven.surefire", "surefire-booter"},
+                {"org.apache.maven.surefire", "surefire-extensions-api"},
+                {"org.apache.maven.surefire", "surefire-api"},
+                {"org.apache.maven.surefire", "surefire-extensions-spi"},
+                {"org.apache.maven.surefire", "surefire-logger-api"},
+                {"org.apache.maven.surefire", "surefire-shared-utils"},
+            };
+
+            List<Artifact> artifacts = new ArrayList<>();
+            List<String> missing = new ArrayList<>();
+
+            for (String[] ga : surefireArtifacts) {
+                String artifactId = ga[1];
+                // Find JAR in lib/ matching <artifactId>-<version>.jar
+                try (var jars = Files.list(libDir)) {
+                    var jarPath = jars.filter(p -> {
+                                String name = p.getFileName().toString();
+                                return name.startsWith(artifactId + "-") && name.endsWith(".jar");
+                            })
+                            .findFirst();
+                    if (jarPath.isPresent()) {
+                        String fileName = jarPath.get().getFileName().toString();
+                        String version = fileName.substring(artifactId.length() + 1, fileName.length() - 4);
+                        var artifact = new org.apache.maven.artifact.DefaultArtifact(
+                                ga[0],
+                                artifactId,
+                                version,
+                                "compile",
+                                "jar",
+                                null,
+                                new org.apache.maven.artifact.handler.DefaultArtifactHandler("jar"));
+                        artifact.setFile(jarPath.get().toFile());
+                        artifacts.add(artifact);
+                    } else {
+                        missing.add(ga[0] + ":" + artifactId);
                     }
+                } catch (IOException e) {
+                    throw new IllegalStateException("Failed to scan lib directory: " + libDir, e);
                 }
-            } catch (IOException e) {
-                logger.warn("Failed to scan lib directory: {}", libDir, e);
             }
-            logger.debug("Built {} classpath artifacts from {}", artifacts.size(), libDir);
+
+            if (!missing.isEmpty()) {
+                throw new IllegalStateException("Required surefire artifacts not found in " + libDir + ":\n"
+                        + missing.stream().map(m -> "  - " + m).collect(Collectors.joining("\n")));
+            }
+
+            logger.info("Built {} surefire classpath artifacts from {}", artifacts.size(), libDir);
             classpathArtifactsCache = artifacts;
             return classpathArtifactsCache;
         }
