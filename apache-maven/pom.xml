@@ -168,6 +168,22 @@ under the License.
 
   <build>
     <plugins>
+      <!-- Skip LICENSE.vm processing: bundled plugins bring in transitive dependencies
+           whose license names (e.g. "Eclipse Public License - Version 1.0",
+           "(Apache-2.0 OR EPL-2.0)") don't match the template's patterns, causing
+           missing license file errors. Only needed for official Apache releases. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-remote-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>process-resource-bundles</id>
+            <configuration>
+              <skip>true</skip>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
