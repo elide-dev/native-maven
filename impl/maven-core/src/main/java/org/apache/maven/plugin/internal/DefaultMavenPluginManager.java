@@ -239,6 +239,76 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         return result;
     }
 
+    /**
+     * Builds an artifact list from JARs in ${maven.home}/lib/ by reading
+     * META-INF/maven/.../pom.properties from each JAR to get GAV coordinates.
+     * This allows plugins like surefire to find their own JARs (e.g. surefire-booter)
+     * via pluginDescriptor.getArtifactMap().
+     */
+    private volatile List<Artifact> classpathArtifactsCache;
+
+    private List<Artifact> buildClasspathArtifacts() {
+        if (classpathArtifactsCache != null) {
+            return classpathArtifactsCache;
+        }
+        synchronized (this) {
+            if (classpathArtifactsCache != null) {
+                return classpathArtifactsCache;
+            }
+            List<Artifact> artifacts = new ArrayList<>();
+            String mavenHome = System.getProperty("maven.home");
+            if (mavenHome == null) {
+                logger.warn("maven.home not set, cannot build classpath artifacts list");
+                classpathArtifactsCache = List.of();
+                return classpathArtifactsCache;
+            }
+            Path libDir = Path.of(mavenHome, "lib");
+            if (!Files.isDirectory(libDir)) {
+                logger.warn("maven.home/lib not found: {}", libDir);
+                classpathArtifactsCache = List.of();
+                return classpathArtifactsCache;
+            }
+            try (var jars = Files.list(libDir)) {
+                for (Path jarPath :
+                        jars.filter(p -> p.toString().endsWith(".jar")).toList()) {
+                    try (JarFile jarFile = new JarFile(jarPath.toFile(), false)) {
+                        // Find pom.properties inside the JAR
+                        var pomProps = jarFile.stream()
+                                .filter(e -> e.getName().startsWith("META-INF/maven/")
+                                        && e.getName().endsWith("/pom.properties"))
+                                .findFirst();
+                        if (pomProps.isPresent()) {
+                            var props = new java.util.Properties();
+                            props.load(jarFile.getInputStream(pomProps.get()));
+                            String groupId = props.getProperty("groupId");
+                            String artifactId = props.getProperty("artifactId");
+                            String version = props.getProperty("version");
+                            if (groupId != null && artifactId != null && version != null) {
+                                var artifact = new org.apache.maven.artifact.DefaultArtifact(
+                                        groupId,
+                                        artifactId,
+                                        version,
+                                        "compile",
+                                        "jar",
+                                        null,
+                                        new org.apache.maven.artifact.handler.DefaultArtifactHandler("jar"));
+                                artifact.setFile(jarPath.toFile());
+                                artifacts.add(artifact);
+                            }
+                        }
+                    } catch (Exception e) {
+                        logger.debug("Failed to read pom.properties from {}: {}", jarPath, e.getMessage());
+                    }
+                }
+            } catch (IOException e) {
+                logger.warn("Failed to scan lib directory: {}", libDir, e);
+            }
+            logger.debug("Built {} classpath artifacts from {}", artifacts.size(), libDir);
+            classpathArtifactsCache = artifacts;
+            return classpathArtifactsCache;
+        }
+    }
+
     @Override
     public PluginDescriptor getPluginDescriptor(
             Plugin plugin, List<RemoteRepository> repositories, RepositorySystemSession session)
@@ -466,7 +536,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                 }
                 pluginDescriptor.setClassRealm(coreRealm);
             }
-            pluginDescriptor.setArtifacts(List.of());
+            pluginDescriptor.setArtifacts(buildClasspathArtifacts());
         } else {
             // TODO: re-enable when fallback to remote resolution is desired
             throw new PluginResolutionException(
