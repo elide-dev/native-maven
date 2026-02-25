@@ -92,22 +92,4 @@ under the License.
     </plugins>
   </build>
 
-  <reporting>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <configuration>
-          <excludes>
-            <exclude>**/package-info.java</exclude>
-          </excludes>
-          <sourceFileIncludes>
-            <sourceFileInclude>**/*.java</sourceFileInclude>
-          </sourceFileIncludes>
-          <failOnError>false</failOnError>
-          <quiet>true</quiet>
-        </configuration>
-      </plugin>
-    </plugins>
-  </reporting>
 </project>

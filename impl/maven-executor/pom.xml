@@ -141,7 +141,7 @@ under the License.
             <maven4home>${project.build.directory}/dependency/apache-maven-${maven4version}</maven4home>
             <localRepository>${settings.localRepository}</localRepository>
           </systemPropertyVariables>
-          <argLine>-Xmx256m @{jacocoArgLine} -Djava.io.tmpdir=${testTmpDir}</argLine>
+          <argLine>-Xmx256m -Djava.io.tmpdir=${testTmpDir}</argLine>
         </configuration>
       </plugin>
     </plugins>
