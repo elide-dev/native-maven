@@ -22,6 +22,12 @@ if [ ! -d "$MAVEN_HOME" ]; then
   exit 1
 fi
 
+if [ -z "$JAVA_HOME" ]; then
+  echo "Error: JAVA_HOME is not set."
+  echo "Set it with: export JAVA_HOME=/path/to/jdk"
+  exit 1
+fi
+
 # --- Find project base directory (.mvn marker) ---
 find_file_argument_basedir() {
   local basedir
@@ -64,7 +70,7 @@ MAVEN_PROJECTBASEDIR=$(find_maven_basedir "$@")
 
 "$SCRIPT_DIR/nmvn-native" \
   -Dguice_bytecode_gen_option=DISABLED \
-  -Djava.home=/Users/ihorak/.sdkman/candidates/java/current \
+  -Djava.home="$JAVA_HOME" \
   -Dmaven.home="$MAVEN_HOME" \
   -Dmaven.conf="$MAVEN_HOME/conf" \
   -Dmaven.multiModuleProjectDirectory="$MAVEN_PROJECTBASEDIR" \
