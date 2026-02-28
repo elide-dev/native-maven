@@ -47,5 +47,5 @@ native-image \
   -H:+AllowJRTFileSystem \
   -H:ConfigurationFileDirectories=reflection \
   --initialize-at-build-time=org.slf4j,org.apache.commons.logging,org.apache.maven.slf4j,org.apache.maven.logging,org.apache.maven.api.cli.logging,org.apache.maven.cli.logging,org.apache.maven.cling.logging,org.apache.maven.cling.invoker.logging,org.apache.maven.monitor.logging,org.apache.maven.plugin.logging,org.codehaus.plexus.logging \
-  org.apache.maven.cli.MavenCli \
+  org.apache.maven.cling.MavenCling \
   nmvn-native
