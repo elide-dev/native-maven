@@ -43,6 +43,7 @@ import org.apache.maven.plugin.PluginDescriptorParsingException;
 import org.apache.maven.plugin.PluginNotFoundException;
 import org.apache.maven.plugin.PluginResolutionException;
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
+import org.apache.maven.plugin.internal.DefaultMavenPluginManager;
 import org.apache.maven.project.MavenProject;
 
 /**
@@ -155,6 +156,9 @@ public class DefaultLifecycleMappingDelegate implements LifecycleMappingDelegate
                                 addMojoExecution(phaseBindings, mojoExecution, phaseId);
                             }
                         } catch (PluginResolutionException e) {
+                            if (DefaultMavenPluginManager.DYNAMIC_LOADING) {
+                                throw e;
+                            }
                             String pluginId = plugin.getId();
                             if (!missingPlugins.contains(pluginId)) {
                                 missingPlugins.add(pluginId);

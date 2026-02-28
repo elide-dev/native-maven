@@ -1,0 +1,13 @@
+[
+  {
+    "type":"agent-extracted",
+    "classes":[
+      { "nameInfo":"org/apache/maven/lifecycle/mapping/DefaultLifecycleMapping$__sisu3", "hash":"zmplSph1v1JKf5uIzdezG9" },
+      { "nameInfo":"org/apache/maven/artifact/handler/DefaultArtifactHandler$__sisu2", "hash":"6NVlZIpnFYGXqNgHdIge2L" },
+      { "nameInfo":"org/apache/maven/wagon/providers/http/HttpWagon$__sisu4", "hash":"JRIUPveqLtDhKGUsydrf26" },
+      { "nameInfo":"org/apache/maven/artifact/handler/DefaultArtifactHandler$__sisu1", "hash":"ZftMh10YuGIKLlq2ds2jWD" },
+      { "nameInfo":"org/apache/maven/wagon/providers/http/HttpWagon$__sisu2", "hash":"U3j8cKj8fELGbGnfgCB2DE" }
+    ]
+  }
+]
+

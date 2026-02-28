@@ -152,6 +152,14 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
      */
     public static final String KEY_EXTENSIONS_REALMS = DefaultMavenPluginManager.class.getName() + "/extensionsRealms";
 
+    /**
+     * When true, plugins not found on the classpath fall back to remote resolution
+     * with isolated classloaders (original Maven behavior).
+     * When false (default), only classpath-bundled plugins are supported.
+     * Controlled by the MAVEN_DYNAMIC_LOADING environment variable.
+     */
+    public static final boolean DYNAMIC_LOADING = "true".equalsIgnoreCase(System.getenv("MAVEN_DYNAMIC_LOADING"));
+
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
     private final PlexusContainer container;
@@ -330,36 +338,40 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             URL classpathDescriptorUrl = getClasspathPluginDescriptorUrl(plugin);
             if (classpathDescriptorUrl != null) {
                 // Plugin is on the classpath — parse descriptor directly, skip remote resolution
-                logger.debug(
+                logger.info(
                         "Loading plugin descriptor for {} from classpath: {}", plugin.getId(), classpathDescriptorUrl);
                 return parsePluginDescriptor(
                         classpathDescriptorUrl::openStream, plugin, classpathDescriptorUrl.toString());
             }
 
-            throw new PluginResolutionException(
-                    plugin,
-                    List.of(new IllegalStateException(
-                            "Plugin " + plugin.getId() + " is not available on the classpath. "
-                                    + "Only classpath-bundled plugins are supported.")),
-                    null);
+            if (!DYNAMIC_LOADING) {
+                throw new PluginResolutionException(
+                        plugin,
+                        List.of(new IllegalStateException(
+                                "Plugin " + plugin.getId() + " is not available on the classpath. "
+                                        + "Only classpath-bundled plugins are supported. "
+                                        + "Set MAVEN_DYNAMIC_LOADING=true to enable remote resolution.")),
+                        null);
+            }
 
-            // TODO: re-enable remote resolution when fallback is desired
-            // org.eclipse.aether.artifact.Artifact artifact =
-            //         pluginDependenciesResolver.resolve(plugin, repositories, session);
-            //
-            // Artifact pluginArtifact = RepositoryUtils.toArtifact(artifact);
-            //
-            // PluginDescriptor descriptor = extractPluginDescriptor(pluginArtifact, plugin);
-            //
-            // boolean isBlankVersion = descriptor.getRequiredMavenVersion() == null
-            //         || descriptor.getRequiredMavenVersion().trim().isEmpty();
-            //
-            // if (isBlankVersion) {
-            //     // only take value from underlying POM if plugin descriptor has no explicit Maven requirement
-            //     descriptor.setRequiredMavenVersion(artifact.getProperty("requiredMavenVersion", null));
-            // }
-            //
-            // return descriptor;
+            // Fallback: remote resolution (original Maven behavior)
+            logger.info("Running plugin descriptor standard maven way (dynamic classloading): {}", plugin.getId());
+            org.eclipse.aether.artifact.Artifact artifact =
+                    pluginDependenciesResolver.resolve(plugin, repositories, session);
+
+            Artifact pluginArtifact = RepositoryUtils.toArtifact(artifact);
+
+            PluginDescriptor descriptor = extractPluginDescriptor(pluginArtifact, plugin);
+
+            boolean isBlankVersion = descriptor.getRequiredMavenVersion() == null
+                    || descriptor.getRequiredMavenVersion().trim().isEmpty();
+
+            if (isBlankVersion) {
+                // only take value from underlying POM if plugin descriptor has no explicit Maven requirement
+                descriptor.setRequiredMavenVersion(artifact.getProperty("requiredMavenVersion", null));
+            }
+
+            return descriptor;
         });
 
         pluginDescriptor.setPlugin(plugin);
@@ -549,38 +561,41 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             }
             pluginDescriptor.setArtifacts(buildClasspathArtifacts());
         } else {
-            // TODO: re-enable when fallback to remote resolution is desired
-            throw new PluginResolutionException(
-                    plugin,
-                    List.of(new IllegalStateException(
-                            "Plugin " + plugin.getId() + " is not available on the classpath.")),
-                    null);
+            if (!DYNAMIC_LOADING) {
+                throw new PluginResolutionException(
+                        plugin,
+                        List.of(new IllegalStateException(
+                                "Plugin " + plugin.getId() + " is not available on the classpath. "
+                                        + "Set MAVEN_DYNAMIC_LOADING=true to enable remote resolution.")),
+                        null);
+            }
 
-            // boolean v4api = pluginDescriptor.getMojos().stream().anyMatch(MojoDescriptor::isV4Api);
-            // Map<String, ClassLoader> foreignImports = calcImports(project, parent, imports, v4api);
-            //
-            // PluginRealmCache.Key cacheKey = pluginRealmCache.createKey(
-            //         plugin,
-            //         parent,
-            //         foreignImports,
-            //         filter,
-            //         project.getRemotePluginRepositories(),
-            //         session.getRepositorySession());
-            //
-            // PluginRealmCache.CacheRecord cacheRecord = pluginRealmCache.get(cacheKey, () -> {
-            //     createPluginRealm(pluginDescriptor, session, parent, foreignImports, filter);
-            //
-            //     return new PluginRealmCache.CacheRecord(
-            //             pluginDescriptor.getClassRealm(), pluginDescriptor.getArtifacts());
-            // });
-            //
-            // pluginDescriptor.setClassRealm(cacheRecord.getRealm());
-            // pluginDescriptor.setArtifacts(new ArrayList<>(cacheRecord.getArtifacts()));
-            // for (ComponentDescriptor<?> componentDescriptor : pluginDescriptor.getComponents()) {
-            //     componentDescriptor.setRealm(cacheRecord.getRealm());
-            // }
-            //
-            // pluginRealmCache.register(project, cacheKey, cacheRecord);
+            // Fallback: remote resolution with isolated ClassRealm (original Maven behavior)
+            boolean v4api = pluginDescriptor.getMojos().stream().anyMatch(MojoDescriptor::isV4Api);
+            Map<String, ClassLoader> foreignImports = calcImports(project, parent, imports, v4api);
+
+            PluginRealmCache.Key cacheKey = pluginRealmCache.createKey(
+                    plugin,
+                    parent,
+                    foreignImports,
+                    filter,
+                    project.getRemotePluginRepositories(),
+                    session.getRepositorySession());
+
+            PluginRealmCache.CacheRecord cacheRecord = pluginRealmCache.get(cacheKey, () -> {
+                createPluginRealm(pluginDescriptor, session, parent, foreignImports, filter);
+
+                return new PluginRealmCache.CacheRecord(
+                        pluginDescriptor.getClassRealm(), pluginDescriptor.getArtifacts());
+            });
+
+            pluginDescriptor.setClassRealm(cacheRecord.getRealm());
+            pluginDescriptor.setArtifacts(new ArrayList<>(cacheRecord.getArtifacts()));
+            for (ComponentDescriptor<?> componentDescriptor : pluginDescriptor.getComponents()) {
+                componentDescriptor.setRealm(cacheRecord.getRealm());
+            }
+
+            pluginRealmCache.register(project, cacheKey, cacheRecord);
         }
     }
 
