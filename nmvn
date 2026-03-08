@@ -72,6 +72,5 @@ MAVEN_PROJECTBASEDIR=$(find_maven_basedir "$@")
   -Dguice_bytecode_gen_option=DISABLED \
   -Djava.home="$JAVA_HOME" \
   -Dmaven.home="$MAVEN_HOME" \
-  -Dmaven.conf="$MAVEN_HOME/conf" \
   -Dmaven.multiModuleProjectDirectory="$MAVEN_PROJECTBASEDIR" \
   "$@"

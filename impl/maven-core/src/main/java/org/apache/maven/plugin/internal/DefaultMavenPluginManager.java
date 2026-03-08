@@ -248,20 +248,19 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
     }
 
     /**
-     * Builds an artifact list from JARs in ${maven.home}/lib/ by reading
-     * META-INF/maven/.../pom.properties from each JAR to get GAV coordinates.
-     * This allows plugins like surefire to find their own JARs (e.g. surefire-booter)
-     * via pluginDescriptor.getArtifactMap().
+     * Builds a list of Surefire artifact references by locating their JARs in ${maven.home}/lib/.
+     * Surefire looks up these artifacts by groupId:artifactId in pluginDescriptor.getArtifactMap()
+     * to find JARs it needs to fork test processes (e.g. surefire-booter).
      */
-    private volatile List<Artifact> classpathArtifactsCache;
+    private volatile List<Artifact> surefireArtifactsCache;
 
-    private List<Artifact> buildClasspathArtifacts() {
-        if (classpathArtifactsCache != null) {
-            return classpathArtifactsCache;
+    private List<Artifact> buildSurefireArtifacts() {
+        if (surefireArtifactsCache != null) {
+            return surefireArtifactsCache;
         }
         synchronized (this) {
-            if (classpathArtifactsCache != null) {
-                return classpathArtifactsCache;
+            if (surefireArtifactsCache != null) {
+                return surefireArtifactsCache;
             }
             String mavenHome = System.getProperty("maven.home");
             if (mavenHome == null) {
@@ -272,8 +271,9 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                 throw new IllegalStateException("maven.home/lib not found: " + libDir);
             }
 
-            // Surefire looks up these 7 artifacts by groupId:artifactId in
-            // pluginArtifactMap. We locate each JAR in lib/ by filename.
+            // Hardcoded list of Surefire artifacts that it looks up by groupId:artifactId
+            // in pluginArtifactMap. We locate each JAR in lib/ by filename.
+            // If Surefire version changes, this list may need to be updated.
             String[][] surefireArtifacts = {
                 {"org.apache.maven.surefire", "maven-surefire-common"},
                 {"org.apache.maven.surefire", "surefire-booter"},
@@ -323,8 +323,8 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             }
 
             logger.info("Built {} surefire classpath artifacts from {}", artifacts.size(), libDir);
-            classpathArtifactsCache = artifacts;
-            return classpathArtifactsCache;
+            surefireArtifactsCache = artifacts;
+            return surefireArtifactsCache;
         }
     }
 
@@ -559,7 +559,10 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                 }
                 pluginDescriptor.setClassRealm(coreRealm);
             }
-            pluginDescriptor.setArtifacts(buildClasspathArtifacts());
+            if ("org.apache.maven.plugins".equals(plugin.getGroupId())
+                    && "maven-surefire-plugin".equals(plugin.getArtifactId())) {
+                pluginDescriptor.setArtifacts(buildSurefireArtifacts());
+            }
         } else {
             if (!DYNAMIC_LOADING) {
                 throw new PluginResolutionException(
