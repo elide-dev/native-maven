@@ -120,11 +120,16 @@ under the License.
     <url>https://ci-maven.apache.org/job/Maven/job/maven-box/job/maven/</url>
   </ciManagement>
   <distributionManagement>
-    <site>
-      <id>apache.website</id>
-      <url>scm:svn:https://svn.apache.org/repos/asf/maven/website/components/${maven.site.path}</url>
-    </site>
-    <downloadUrl>https://maven.apache.org/download.html</downloadUrl>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/elide-dev/maven</url>
+    </repository>
+    <snapshotRepository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/elide-dev/maven</url>
+    </snapshotRepository>
   </distributionManagement>
 
   <properties>
