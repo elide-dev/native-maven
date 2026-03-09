@@ -26,7 +26,7 @@ jobs:
           -B
           -DskipTests
           -Drat.skip=true
-          -DaltDeploymentRepository=github::https://maven.pkg.github.com/elide-dev/maven
+          -DaltDeploymentRepository=github::https://maven.pkg.github.com/elide-dev/native-maven
           --settings .github/settings.xml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

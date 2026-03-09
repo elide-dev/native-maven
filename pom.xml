@@ -123,12 +123,12 @@ under the License.
     <repository>
       <id>github</id>
       <name>GitHub Packages</name>
-      <url>https://maven.pkg.github.com/elide-dev/maven</url>
+      <url>https://maven.pkg.github.com/elide-dev/native-maven</url>
     </repository>
     <snapshotRepository>
       <id>github</id>
       <name>GitHub Packages</name>
-      <url>https://maven.pkg.github.com/elide-dev/maven</url>
+      <url>https://maven.pkg.github.com/elide-dev/native-maven</url>
     </snapshotRepository>
   </distributionManagement>
 
