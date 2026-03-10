@@ -25,6 +25,9 @@ jobs:
           java-version: '21'
           distribution: temurin
 
+      - name: Strip SNAPSHOT from versions
+        run: find . -name 'pom.xml' -exec sed -i 's/-SNAPSHOT//g' {} +
+
       - name: Build and publish
         run: >
           mvn deploy
