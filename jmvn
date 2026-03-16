@@ -1,0 +1,92 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
+MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
+
+# Build classpath from boot/ (classworlds - still needed internally by Maven)
+CLASSPATH=""
+for jar in "$MAVEN_HOME"/boot/*.jar; do
+  if [ -z "$CLASSPATH" ]; then
+    CLASSPATH="$jar"
+  else
+    CLASSPATH="$CLASSPATH:$jar"
+  fi
+done
+
+# Add all JARs from lib/
+for jar in "$MAVEN_HOME"/lib/*.jar; do
+  if [ -z "$CLASSPATH" ]; then
+    CLASSPATH="$jar"
+  else
+    CLASSPATH="$CLASSPATH:$jar"
+  fi
+done
+
+# --- Find project base directory (.mvn marker) ---
+find_file_argument_basedir() {
+  local basedir
+  basedir=$(pwd)
+  local found_file_switch=0
+  for arg in "$@"; do
+    if [ $found_file_switch -eq 1 ]; then
+      if [ -d "$arg" ]; then
+        basedir=$(cd "$arg" && pwd -P)
+      elif [ -f "$arg" ]; then
+        basedir=$(cd "$(dirname "$arg")" && pwd -P)
+      fi
+      break
+    fi
+    if [ "$arg" = "-f" ] || [ "$arg" = "--file" ]; then
+      found_file_switch=1
+    fi
+  done
+  echo "$basedir"
+}
+
+find_maven_basedir() {
+  local basedir
+  basedir=$(find_file_argument_basedir "$@")
+  local wdir="$basedir"
+  while : ; do
+    if [ -d "$wdir/.mvn" ]; then
+      basedir="$wdir"
+      break
+    fi
+    if [ "$wdir" = "/" ]; then
+      break
+    fi
+    wdir=$(cd "$wdir/.." && pwd)
+  done
+  echo "$basedir"
+}
+
+MAVEN_PROJECTBASEDIR=$(find_maven_basedir "$@")
+
+
+
+# Also include any extensions if present
+#if [ -d "$MAVEN_HOME/lib/ext" ]; then
+#  for jar in "$MAVEN_HOME"/lib/ext/*.jar; do
+#    if [ -f "$jar" ]; then
+#      CLASSPATH="$CLASSPATH:$jar"
+#    fi
+#  done
+#fi
+
+# Run Maven directly without Classworlds launcher
+
+#  -Dguice_bytecode_gen_option=DISABLED \  - needed for native image compilation
+#  -Dmaven.home="$MAVEN_HOME" \ - needed for surefire
+#  --enable-native-access=ALL-UNNAMED \ - flag is needed because of JLine. Maven 4.x uses JLine for its interactive console features (colored output, terminal handling, progress bars, etc.). JLine uses native code to interact with the terminal — things like reading terminal dimensions, setting raw mode, handling key input, etc. Starting with Java 22+, the JVM requires explicit permission for code to call native functions through the Foreign Function & Memory API (Project Panama). The --enable-native-access=ALL-UNNAMED flag grants that permission to all classes on the classpath (which are in the unnamed module).
+
+java \
+  -agentlib:native-image-agent=config-merge-dir="$SCRIPT_DIR/reflection2" \
+  -Dguice_bytecode_gen_option=DISABLED \
+  --enable-native-access=ALL-UNNAMED \
+  -classpath "$CLASSPATH" \
+  -Dlibrary.jline.path="$MAVEN_HOME/lib/jline-native" \
+  -Dmaven.home="$MAVEN_HOME" \
+  -Dmaven.multiModuleProjectDirectory="$MAVEN_PROJECTBASEDIR" \
+  org.apache.maven.cling.MavenCling \
+  "$@"
