@@ -40,12 +40,29 @@ for jar in "$MAVEN_HOME"/lib/*.jar; do
   fi
 done
 
+## question: where -H:+SupportPredefinedClasses was not needed when -H:+RuntimeClassLoading -H:EnableURLProtocols=jar was not there. How those two features interact with each other?
+# Error: Cannot predefine class with hash zmplSph1v1JKf5uIzdezG9 from file:/Users/ihorak/Developer/native-maven/maven/reflection/agent-extracted-predefined-classes/ because class predefinition is disabled. Enable this feature using option -H:+SupportPredefinedClasses.
+#   -H:Preserve=package=java.util.stream \
+#  -H:Preserve=package=java.util.regex \
+#  -H:Preserve=package=java.nio \
+#  -H:Preserve=package=java.nio.file \
+#  -H:Preserve=package=java.net \
 native-image \
   -classpath "$CLASSPATH" \
   -Dguice_bytecode_gen_option=DISABLED \
   --enable-https \
+  -H:+UnlockExperimentalVMOptions \
   -H:+AllowJRTFileSystem \
-  -H:ConfigurationFileDirectories=reflection \
+  -H:+RuntimeClassLoading \
+  -H:EnableURLProtocols=jar \
+  -H:ConfigurationFileDirectories=reflection4 \
+  -H:Preserve=module=java.base \
+  -H:Preserve=package=org.apache.maven.artifact.* \
+  -H:Preserve=package=org.apache.maven.project.* \
+  -H:Preserve=package=org.apache.maven.plugin.* \
+  -H:Preserve=package=org.apache.maven.api.* \
+  -H:Preserve=package=org.eclipse.aether.* \
+  -H:Preserve=package=org.slf4j.* \
   --initialize-at-build-time=org.slf4j,org.apache.commons.logging,org.apache.maven.slf4j,org.apache.maven.logging,org.apache.maven.api.cli.logging,org.apache.maven.cli.logging,org.apache.maven.cling.logging,org.apache.maven.cling.invoker.logging,org.apache.maven.monitor.logging,org.apache.maven.plugin.logging,org.codehaus.plexus.logging \
   org.apache.maven.cling.MavenCling \
   nmvn-native

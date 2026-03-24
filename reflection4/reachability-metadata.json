@@ -1,6 +1,33 @@
 {
   "reflection": [
     {
+      "type": {
+        "proxy": [
+          "org.apache.maven.plugin.MavenPluginManager"
+        ]
+      }
+    },
+    {
+      "type": {
+        "lambda": {
+          "declaringClass": "org.apache.maven.execution.scope.internal.MojoExecutionScope",
+          "interfaces": [
+            "com.google.inject.Provider"
+          ]
+        }
+      }
+    },
+    {
+      "type": {
+        "lambda": {
+          "declaringClass": "org.apache.maven.session.scope.internal.SessionScope",
+          "interfaces": [
+            "com.google.inject.Provider"
+          ]
+        }
+      }
+    },
+    {
       "type": "apple.security.AppleProvider",
       "methods": [
         {
@@ -338,120 +365,6 @@
     },
     {
       "type": "org.apache.maven.ReactorReader$ReactorReaderSpy",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.model.Build",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.model.BuildBase",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.model.IssueManagement",
-      "methods": [
-        {
-          "name": "getUrl",
-          "parameterTypes": []
-        }
-      ]
-    },
-    {
-      "type": "org.apache.maven.api.model.Model",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.model.ModelBase",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.model.Organization",
-      "methods": [
-        {
-          "name": "getName",
-          "parameterTypes": []
-        }
-      ]
-    },
-    {
-      "type": "org.apache.maven.api.model.Parent"
-    },
-    {
-      "type": "org.apache.maven.api.model.Reporting",
-      "methods": [
-        {
-          "name": "getOutputDirectory",
-          "parameterTypes": []
-        }
-      ]
-    },
-    {
-      "type": "org.apache.maven.api.model.Scm",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.LanguageProvider",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.LifecycleProvider",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.ModelParser",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.ModelTransformer",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.PackagingProvider",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.PathScopeProvider",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.ProjectScopeProvider",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.PropertyContributor",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.api.spi.TypeProvider",
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
       "allDeclaredConstructors": true
@@ -2790,166 +2703,6 @@
           ]
         }
       ]
-    },
-    {
-      "type": "org.apache.maven.project.DefaultMavenProjectBuilder",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.DefaultMavenProjectHelper",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.DefaultProjectBuilder",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.DefaultProjectBuildingHelper",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.DefaultProjectDependenciesResolver",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.DefaultProjectRealmCache",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.MavenProject",
-      "methods": [
-        {
-          "name": "getArtifact",
-          "parameterTypes": []
-        },
-        {
-          "name": "getArtifactMap",
-          "parameterTypes": []
-        },
-        {
-          "name": "getBuild",
-          "parameterTypes": []
-        },
-        {
-          "name": "getCompileClasspathElements",
-          "parameterTypes": []
-        },
-        {
-          "name": "getCompileSourceRoots",
-          "parameterTypes": []
-        },
-        {
-          "name": "getReporting",
-          "parameterTypes": []
-        },
-        {
-          "name": "getResources",
-          "parameterTypes": []
-        },
-        {
-          "name": "getTestClasspathElements",
-          "parameterTypes": []
-        },
-        {
-          "name": "getTestCompileSourceRoots",
-          "parameterTypes": []
-        },
-        {
-          "name": "getTestResources",
-          "parameterTypes": []
-        },
-        {
-          "name": "getVersion",
-          "parameterTypes": []
-        }
-      ]
-    },
-    {
-      "type": "org.apache.maven.project.artifact.DefaultMavenMetadataCache",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.artifact.DefaultMetadataSource",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.artifact.DefaultProjectArtifactsCache",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.artifact.MavenMetadataSource",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.collector.DefaultProjectsSelector",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.collector.MultiModuleCollectionStrategy",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.collector.PomlessCollectionStrategy",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.collector.RequestPomCollectionStrategy",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.inheritance.DefaultModelInheritanceAssembler",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.interpolation.AbstractStringBasedModelInterpolator"
-    },
-    {
-      "type": "org.apache.maven.project.interpolation.StringSearchModelInterpolator",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.path.DefaultPathTranslator",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
-    },
-    {
-      "type": "org.apache.maven.project.validation.DefaultModelValidator",
-      "allDeclaredFields": true,
-      "allDeclaredMethods": true,
-      "allDeclaredConstructors": true
     },
     {
       "type": "org.apache.maven.reporting.AbstractMavenReport"
@@ -5558,9 +5311,6 @@
       ]
     },
     {
-      "type": "org.slf4j.jdk.platform.logging.SLF4JSystemLoggerFinder"
-    },
-    {
       "type": "org.sonatype.guice.bean.locators.BeanLocator"
     },
     {
@@ -5980,33 +5730,6 @@
     },
     {
       "type": "sun.util.resources.cldr.TimeZoneNames_en_US"
-    },
-    {
-      "type": {
-        "proxy": [
-          "org.apache.maven.plugin.MavenPluginManager"
-        ]
-      }
-    },
-    {
-      "type": {
-        "lambda": {
-          "declaringClass": "org.apache.maven.execution.scope.internal.MojoExecutionScope",
-          "interfaces": [
-            "com.google.inject.Provider"
-          ]
-        }
-      }
-    },
-    {
-      "type": {
-        "lambda": {
-          "declaringClass": "org.apache.maven.session.scope.internal.SessionScope",
-          "interfaces": [
-            "com.google.inject.Provider"
-          ]
-        }
-      }
     }
   ],
   "resources": [
@@ -6081,9 +5804,6 @@
     },
     {
       "glob": "META-INF/services/org.apache.maven.surefire.api.provider.SurefireProvider"
-    },
-    {
-      "glob": "META-INF/services/org.slf4j.spi.SLF4JServiceProvider"
     },
     {
       "glob": "META-INF/services/org/jline/terminal/provider/exec"
