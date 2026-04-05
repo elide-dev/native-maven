@@ -151,6 +151,35 @@ public class DefaultBuildPluginManager implements BuildPluginManager {
 
             legacySupport.setSession(session);
 
+            // DEBUG: verify classloader identity for interpreted plugins
+            if (mojo != null) {
+                Class<?> mojoClass = mojo.getClass();
+                ClassLoader cl = mojoClass.getClassLoader();
+                System.err.println("=== CLASSLOADER DEBUG for " + mojoClass.getName() + " ===");
+                System.err.println("  ClassLoader: " + cl);
+                System.err.println(
+                        "  ClassLoader class: " + (cl != null ? cl.getClass().getName() : "null"));
+                // Try loading a resource from the mojo's own classloader
+                java.net.URL testResource =
+                        cl != null ? cl.getResource(mojoClass.getName().replace('.', '/') + ".class") : null;
+                System.err.println("  Can find own class as resource: " + (testResource != null));
+                // Try loading Velocity's directive.properties if this is remote-resources plugin
+                if (mojoClass.getName().contains("remote")) {
+                    java.net.URL velocityRes = cl != null
+                            ? cl.getResource("org/apache/velocity/runtime/defaults/directive.properties")
+                            : null;
+                    System.err.println("  Can find directive.properties: " + (velocityRes != null));
+                    System.err.println("  directive.properties URL: " + velocityRes);
+                    // Also check via Thread context classloader
+                    ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+                    System.err.println("  TCCL: " + tccl);
+                    java.net.URL velocityResTccl = tccl != null
+                            ? tccl.getResource("org/apache/velocity/runtime/defaults/directive.properties")
+                            : null;
+                    System.err.println("  TCCL can find directive.properties: " + (velocityResTccl != null));
+                }
+            }
+
             // NOTE: DuplicateArtifactAttachmentException is currently unchecked, so be careful removing this try/catch!
             // This is necessary to avoid creating compatibility problems for existing plugins that use
             // MavenProjectHelper.attachArtifact(..).
