@@ -47,6 +47,8 @@ done
 #  -H:Preserve=package=java.nio \
 #  -H:Preserve=package=java.nio.file \
 #  -H:Preserve=package=java.net \
+#  --initialize-at-build-time=org.slf4j,org.apache.commons.logging,org.apache.maven.slf4j,org.apache.maven.logging,org.apache.maven.api.cli.logging,org.apache.maven.cli.logging,org.apache.maven.cling.logging,org.apache.maven.cling.invoker.logging,org.apache.maven.monitor.logging,org.apache.maven.plugin.logging,org.codehaus.plexus.logging \
+#
 native-image \
   -classpath "$CLASSPATH" \
   -Dguice_bytecode_gen_option=DISABLED \
@@ -57,12 +59,17 @@ native-image \
   -H:EnableURLProtocols=jar \
   -H:ConfigurationFileDirectories=reflection4 \
   -H:Preserve=module=java.base \
+  -H:Preserve=module=java.logging \
+  -H:Preserve=module=java.xml \
+  -H:Preserve=module=java.desktop \
   -H:Preserve=package=org.apache.maven.artifact.* \
   -H:Preserve=package=org.apache.maven.project.* \
   -H:Preserve=package=org.apache.maven.plugin.* \
+  -H:Preserve=package=org.apache.commons.logging.impl.* \
   -H:Preserve=package=org.apache.maven.api.* \
   -H:Preserve=package=org.eclipse.aether.* \
   -H:Preserve=package=org.slf4j.* \
-  --initialize-at-build-time=org.slf4j,org.apache.commons.logging,org.apache.maven.slf4j,org.apache.maven.logging,org.apache.maven.api.cli.logging,org.apache.maven.cli.logging,org.apache.maven.cling.logging,org.apache.maven.cling.invoker.logging,org.apache.maven.monitor.logging,org.apache.maven.plugin.logging,org.codehaus.plexus.logging \
+  -H:Preserve=package=org.codehaus.plexus.* \
+  --initialize-at-build-time=org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging \
   org.apache.maven.cling.MavenCling \
   nmvn-native

@@ -79,9 +79,8 @@ MAVEN_PROJECTBASEDIR=$(find_maven_basedir "$@")
 #  -Dguice_bytecode_gen_option=DISABLED \  - needed for native image compilation
 #  -Dmaven.home="$MAVEN_HOME" \ - needed for surefire
 #  --enable-native-access=ALL-UNNAMED \ - flag is needed because of JLine. Maven 4.x uses JLine for its interactive console features (colored output, terminal handling, progress bars, etc.). JLine uses native code to interact with the terminal — things like reading terminal dimensions, setting raw mode, handling key input, etc. Starting with Java 22+, the JVM requires explicit permission for code to call native functions through the Foreign Function & Memory API (Project Panama). The --enable-native-access=ALL-UNNAMED flag grants that permission to all classes on the classpath (which are in the unnamed module).
-
+#   -agentlib:native-image-agent=config-merge-dir="$SCRIPT_DIR/reflection2" \
 java \
-  -agentlib:native-image-agent=config-merge-dir="$SCRIPT_DIR/reflection2" \
   -Dguice_bytecode_gen_option=DISABLED \
   --enable-native-access=ALL-UNNAMED \
   -classpath "$CLASSPATH" \
