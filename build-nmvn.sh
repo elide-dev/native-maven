@@ -48,7 +48,12 @@ done
 #  -H:Preserve=package=java.nio.file \
 #  -H:Preserve=package=java.net \
 #  --initialize-at-build-time=org.slf4j,org.apache.commons.logging,org.apache.maven.slf4j,org.apache.maven.logging,org.apache.maven.api.cli.logging,org.apache.maven.cli.logging,org.apache.maven.cling.logging,org.apache.maven.cling.invoker.logging,org.apache.maven.monitor.logging,org.apache.maven.plugin.logging,org.codehaus.plexus.logging \
-#
+
+
+# jdk.compiler and java.compiler are preserved as modules for Spotless/Palantir/Google Java Format
+# which heavily use javac internals. This requires initialize-at-build-time for classes that
+# end up in the image heap, and initialize-at-run-time for classes with native memory pointers.
+
 native-image \
   -classpath "$CLASSPATH" \
   -Dguice_bytecode_gen_option=DISABLED \
@@ -62,14 +67,18 @@ native-image \
   -H:Preserve=module=java.logging \
   -H:Preserve=module=java.xml \
   -H:Preserve=module=java.desktop \
+  -H:Preserve=module=java.compiler \
+  -H:Preserve=module=jdk.compiler \
   -H:Preserve=package=org.apache.maven.artifact.* \
   -H:Preserve=package=org.apache.maven.project.* \
   -H:Preserve=package=org.apache.maven.plugin.* \
+  -H:Preserve=package=org.apache.maven.archiver.* \
   -H:Preserve=package=org.apache.commons.logging.impl.* \
   -H:Preserve=package=org.apache.maven.api.* \
   -H:Preserve=package=org.eclipse.aether.* \
   -H:Preserve=package=org.slf4j.* \
   -H:Preserve=package=org.codehaus.plexus.* \
-  --initialize-at-build-time=org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging \
+  --initialize-at-build-time=org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool \
+  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary \
   org.apache.maven.cling.MavenCling \
   nmvn-native

@@ -163,6 +163,12 @@ public class DefaultBuildPluginManager implements BuildPluginManager {
                 java.net.URL testResource =
                         cl != null ? cl.getResource(mojoClass.getName().replace('.', '/') + ".class") : null;
                 System.err.println("  Can find own class as resource: " + (testResource != null));
+                // Verify XmlPullParser.TYPES from compiled code
+                System.err.println("  XmlPullParser.TYPES: " + org.codehaus.plexus.util.xml.pull.XmlPullParser.TYPES);
+                System.err.println("  XmlPullParser.TYPES length: "
+                        + (org.codehaus.plexus.util.xml.pull.XmlPullParser.TYPES != null
+                                ? org.codehaus.plexus.util.xml.pull.XmlPullParser.TYPES.length
+                                : "null"));
                 // Try loading Velocity's directive.properties if this is remote-resources plugin
                 if (mojoClass.getName().contains("remote")) {
                     java.net.URL velocityRes = cl != null

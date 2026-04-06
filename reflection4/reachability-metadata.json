@@ -370,21 +370,6 @@
       "allDeclaredConstructors": true
     },
     {
-      "type": "org.apache.maven.archiver.MavenArchiveConfiguration",
-      "methods": [
-        {
-          "name": "<init>",
-          "parameterTypes": []
-        },
-        {
-          "name": "setManifestEntries",
-          "parameterTypes": [
-            "java.util.Map"
-          ]
-        }
-      ]
-    },
-    {
       "type": "org.apache.maven.bridge.MavenRepositorySystem",
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
