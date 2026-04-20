@@ -1,0 +1,60 @@
+name: Build and Release Native Maven
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Strip SNAPSHOT from versions
+        run: find . -name 'pom.xml' -exec sed -i 's/-SNAPSHOT//g' {} +
+
+      - name: Build Maven distribution
+        run: mvn clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+
+      - name: Build native image
+        run: |
+          chmod +x build-nmvn-no-crema.sh
+          ./build-nmvn-no-crema.sh
+
+      - name: Assemble distribution
+        run: |
+          MAVEN_HOME=apache-maven/target/apache-maven-4.1.0
+          mkdir -p nmvn/bin nmvn/conf nmvn/lib
+
+          # bin: wrapper script + native binary
+          cp dist/mvn nmvn/bin/
+          cp dist/nmvn-native nmvn/bin/
+          chmod +x nmvn/bin/mvn nmvn/bin/nmvn-native
+
+          # conf and lib from maven distribution
+          cp -r "$MAVEN_HOME"/conf/* nmvn/conf/
+          cp -r "$MAVEN_HOME"/lib/* nmvn/lib/
+
+          # README
+          cp "$MAVEN_HOME"/README.txt nmvn/ 2>/dev/null || true
+
+          zip -r nmvn-linux-x86_64.zip nmvn/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-${{ github.sha }}
+          name: Native Maven (Linux x86_64)
+          files: nmvn-linux-x86_64.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

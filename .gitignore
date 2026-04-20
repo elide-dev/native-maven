@@ -21,4 +21,5 @@
 
 # Mac
 .DS_Store
-
+/dist/nmvn-native
+.claude
