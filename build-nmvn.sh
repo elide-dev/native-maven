@@ -62,7 +62,7 @@ native-image \
   -H:+AllowJRTFileSystem \
   -H:+RuntimeClassLoading \
   -H:EnableURLProtocols=jar \
-  -H:ConfigurationFileDirectories=reflection4 \
+  -H:ConfigurationFileDirectories=reflection-crema \
   -H:Preserve=module=java.base \
   -H:Preserve=module=java.logging \
   -H:Preserve=module=java.xml \
