@@ -2,7 +2,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
-MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
+MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0"
 
 # Check if Maven distribution exists, extract if needed
 if [ ! -d "$MAVEN_HOME" ]; then

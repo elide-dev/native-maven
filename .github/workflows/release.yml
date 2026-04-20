@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-32-cores
     permissions:
       contents: write
 
@@ -33,21 +33,22 @@ jobs:
       - name: Assemble distribution
         run: |
           MAVEN_HOME=apache-maven/target/apache-maven-4.1.0
-          mkdir -p nmvn/bin nmvn/conf nmvn/lib
+          DIST_DIR=native-maven
+          mkdir -p "$DIST_DIR"/bin "$DIST_DIR"/conf "$DIST_DIR"/lib
 
           # bin: wrapper script + native binary
-          cp dist/mvn nmvn/bin/
-          cp dist/nmvn-native nmvn/bin/
-          chmod +x nmvn/bin/mvn nmvn/bin/nmvn-native
+          cp dist/mvn "$DIST_DIR"/bin/
+          cp dist/nmvn-native "$DIST_DIR"/bin/
+          chmod +x "$DIST_DIR"/bin/mvn "$DIST_DIR"/bin/nmvn-native
 
           # conf and lib from maven distribution
-          cp -r "$MAVEN_HOME"/conf/* nmvn/conf/
-          cp -r "$MAVEN_HOME"/lib/* nmvn/lib/
+          cp -r "$MAVEN_HOME"/conf/* "$DIST_DIR"/conf/
+          cp -r "$MAVEN_HOME"/lib/* "$DIST_DIR"/lib/
 
           # README
-          cp "$MAVEN_HOME"/README.txt nmvn/ 2>/dev/null || true
+          cp "$MAVEN_HOME"/README.txt "$DIST_DIR"/ 2>/dev/null || true
 
-          zip -r nmvn-linux-x86_64.zip nmvn/
+          zip -r nmvn-linux-x86_64.zip "$DIST_DIR"/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
