@@ -11,7 +11,7 @@ if [ ! -d "$MAVEN_HOME" ]; then
     echo "  mvn clean package -DskipTests -Drat.skip=true"
     exit 1
   fi
-  TARBALL="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT-bin.tar.gz"
+  TARBALL="$TARGET_DIR/apache-maven-4.1.0-bin.tar.gz"
   if [ ! -f "$TARBALL" ]; then
     echo "Error: $TARBALL not found. Build Maven first:"
     echo "  mvn clean package -DskipTests -Drat.skip=true"
