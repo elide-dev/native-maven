@@ -12,8 +12,8 @@ jobs:
             artifact: nmvn-linux-x86_64
           - os: macos-arm64-cipool
             artifact: nmvn-macos-aarch64
-          - os: windows-latest-16-cores
-            artifact: nmvn-windows-x86_64
+#          - os: windows-latest-16-cores
+#            artifact: nmvn-windows-x86_64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -84,7 +84,7 @@ jobs:
           files: |
             nmvn-linux-x86_64.zip
             nmvn-macos-aarch64.zip
-            nmvn-windows-x86_64.zip
+#            nmvn-windows-x86_64.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
