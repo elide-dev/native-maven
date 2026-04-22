@@ -29,7 +29,7 @@ jobs:
           distribution: 'graalvm'
 
       - name: Strip SNAPSHOT from versions
-        run: find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
+        run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
 
       - name: Build Maven distribution
         run: mvn clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
