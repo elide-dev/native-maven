@@ -35,7 +35,7 @@ jobs:
         run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
 
       - name: Build Maven distribution
-        run: mvn clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+        run: ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
 
       - name: Build native image
         run: |
