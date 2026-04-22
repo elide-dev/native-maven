@@ -15,6 +15,9 @@ jobs:
           - os: windows-latest-16-cores
             artifact: nmvn-windows-x86_64
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: read
 
