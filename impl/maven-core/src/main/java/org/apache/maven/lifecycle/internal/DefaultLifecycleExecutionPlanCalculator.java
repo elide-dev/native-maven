@@ -32,6 +32,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.maven.api.plugin.descriptor.lifecycle.Execution;
 import org.apache.maven.api.plugin.descriptor.lifecycle.Phase;
@@ -56,6 +57,7 @@ import org.apache.maven.plugin.PluginResolutionException;
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
 import org.apache.maven.plugin.descriptor.Parameter;
 import org.apache.maven.plugin.descriptor.PluginDescriptor;
+import org.apache.maven.plugin.internal.DefaultMavenPluginManager;
 import org.apache.maven.plugin.prefix.NoPluginFoundForPrefixException;
 import org.apache.maven.plugin.version.PluginVersionResolutionException;
 import org.apache.maven.project.MavenProject;
@@ -159,10 +161,29 @@ public class DefaultLifecycleExecutionPlanCalculator implements LifecycleExecuti
             throws InvalidPluginDescriptorException, MojoNotFoundException, PluginResolutionException,
                     PluginDescriptorParsingException, PluginNotFoundException {
         Set<MojoDescriptor> descriptors = new HashSet<>(mojoExecutions.size());
+        List<String> missingPlugins = new ArrayList<>();
 
         for (MojoExecution execution : mojoExecutions) {
-            MojoDescriptor mojoDescriptor = fillMojoDescriptor(session, project, execution);
-            descriptors.add(mojoDescriptor);
+            try {
+                MojoDescriptor mojoDescriptor = fillMojoDescriptor(session, project, execution);
+                descriptors.add(mojoDescriptor);
+            } catch (PluginResolutionException e) {
+                if (DefaultMavenPluginManager.DYNAMIC_LOADING) {
+                    throw e;
+                }
+                String pluginId = execution.getPlugin().getId();
+                if (!missingPlugins.contains(pluginId)) {
+                    missingPlugins.add(pluginId);
+                }
+            }
+        }
+
+        if (!missingPlugins.isEmpty()) {
+            throw new PluginResolutionException(
+                    mojoExecutions.get(0).getPlugin(),
+                    List.of(new IllegalStateException("The following plugins are not available on the classpath:\n"
+                            + missingPlugins.stream().map(p -> "  - " + p).collect(Collectors.joining("\n")))),
+                    null);
         }
 
         return descriptors;

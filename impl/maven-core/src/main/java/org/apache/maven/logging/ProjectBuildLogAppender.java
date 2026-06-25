@@ -73,6 +73,8 @@ public class ProjectBuildLogAppender implements AutoCloseable {
 
     public ProjectBuildLogAppender(BuildEventListener buildEventListener) {
         this.buildEventListener = buildEventListener;
+        // Note: when a non-Maven SLF4J provider is active, this sink has no effect
+        // since the active loggers won't be MavenSimpleLogger instances
         MavenSimpleLogger.setLogSink(this::accept);
     }
 

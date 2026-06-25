@@ -43,6 +43,7 @@ public class DefaultRootLocator implements RootLocator {
         }
         // we're too early to use the modelProcessor ...
         Path pom = dir.resolve("pom.xml");
+        debugClassLoaders();
         try (InputStream is = Files.newInputStream(pom)) {
             XMLStreamReader parser = XmlService.newXMLInputFactory().createXMLStreamReader(is);
             if (parser.nextTag() == XMLStreamReader.START_ELEMENT
@@ -61,5 +62,49 @@ public class DefaultRootLocator implements RootLocator {
             // displayed to the user, so just bail out and return false.
         }
         return false;
+    }
+
+    private static void debugClassLoaders() {
+        String svc = "META-INF/services/javax.xml.stream.XMLInputFactory";
+        String cls = "com.ctc.wstx.stax.WstxInputFactory";
+        System.err.println("==== DefaultRootLocator XMLInputFactory diagnostic ====");
+        ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+        probe("TCCL", tccl, svc, cls);
+        probe("DefaultRootLocator.class.getClassLoader()", DefaultRootLocator.class.getClassLoader(), svc, cls);
+        probe("XMLInputFactory.class.getClassLoader()", XMLInputFactory.class.getClassLoader(), svc, cls);
+        probe("system", ClassLoader.getSystemClassLoader(), svc, cls);
+        System.err.println("==== end diagnostic ====");
+    }
+
+    private static void probe(String label, ClassLoader cl, String resource, String className) {
+        System.err.println("-- " + label + " = " + cl);
+        ClassLoader walker = cl;
+        int depth = 0;
+        while (walker != null && depth < 10) {
+            System.err.println("    parent[" + depth + "] = " + walker);
+            walker = walker.getParent();
+            depth++;
+        }
+        if (cl == null) {
+            return;
+        }
+        try {
+            java.net.URL u = cl.getResource(resource);
+            System.err.println("    getResource(" + resource + ") = " + u);
+            java.util.Enumeration<java.net.URL> en = cl.getResources(resource);
+            int n = 0;
+            while (en.hasMoreElements()) {
+                System.err.println("    getResources[" + (n++) + "] = " + en.nextElement());
+            }
+            System.err.println("    getResources count = " + n);
+        } catch (Throwable t) {
+            System.err.println("    resource lookup threw: " + t);
+        }
+        try {
+            Class<?> c = Class.forName(className, false, cl);
+            System.err.println("    Class.forName(" + className + ") = " + c + "  module=" + c.getModule());
+        } catch (Throwable t) {
+            System.err.println("    Class.forName(" + className + ") threw: " + t);
+        }
     }
 }

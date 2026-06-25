@@ -72,6 +72,8 @@ public class PluginDescriptor extends ComponentSetDescriptor implements Cloneabl
 
     private ClassRealm classRealm;
 
+    private ClassLoader classLoader;
+
     // calculated on-demand.
     private Map<String, Artifact> artifactMap;
 
@@ -342,6 +344,25 @@ public class PluginDescriptor extends ComponentSetDescriptor implements Cloneabl
     }
 
     public ClassRealm getClassRealm() {
+        return classRealm;
+    }
+
+    /**
+     * Sets a plain ClassLoader for plugins loaded from the classpath (V4 API only).
+     * When set, this is used instead of classRealm, avoiding URLClassLoader/ClassRealm overhead.
+     */
+    public void setClassLoader(ClassLoader classLoader) {
+        this.classLoader = classLoader;
+    }
+
+    /**
+     * Returns the ClassLoader for this plugin. If a plain classLoader is set (classpath plugins),
+     * returns that. Otherwise falls back to classRealm (which extends ClassLoader).
+     */
+    public ClassLoader getPluginClassLoader() {
+        if (classLoader != null) {
+            return classLoader;
+        }
         return classRealm;
     }
 

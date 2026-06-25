@@ -105,15 +105,22 @@ public class DefaultBuildPluginManager implements BuildPluginManager {
 
         Mojo mojo = null;
 
-        ClassRealm pluginRealm;
-        try {
-            pluginRealm = getPluginRealm(session, mojoDescriptor.getPluginDescriptor());
-        } catch (PluginResolutionException e) {
-            throw new PluginExecutionException(mojoExecution, project, e);
+        PluginDescriptor pluginDescriptor = mojoDescriptor.getPluginDescriptor();
+        ClassLoader pluginClassLoader = pluginDescriptor.getPluginClassLoader();
+        ClassRealm pluginRealm = pluginDescriptor.getClassRealm();
+
+        if (pluginClassLoader == null) {
+            // Neither classLoader nor classRealm set — trigger setup
+            try {
+                pluginRealm = getPluginRealm(session, pluginDescriptor);
+            } catch (PluginResolutionException e) {
+                throw new PluginExecutionException(mojoExecution, project, e);
+            }
+            pluginClassLoader = pluginDescriptor.getPluginClassLoader();
         }
 
         ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(pluginRealm);
+        Thread.currentThread().setContextClassLoader(pluginClassLoader);
 
         MavenSession oldSession = legacySupport.getSession();
 
@@ -159,8 +166,14 @@ public class DefaultBuildPluginManager implements BuildPluginManager {
                 throw new PluginExecutionException(mojoExecution, project, e);
             }
         } catch (MavenException e) {
+            // TODO: temporary debug logging for classpath plugin development
+            System.err.println("=== MOJO EXECUTION FAILED (MavenException) ===");
+            e.printStackTrace(System.err);
             throw e;
         } catch (PluginContainerException e) {
+            // TODO: temporary debug logging for classpath plugin development
+            System.err.println("=== MOJO EXECUTION FAILED (PluginContainerException) ===");
+            e.printStackTrace(System.err);
             mojoExecutionListener.afterExecutionFailure(
                     new MojoExecutionEvent(session, project, mojoExecution, mojo, e));
             throw new PluginExecutionException(mojoExecution, project, e);
@@ -171,17 +184,24 @@ public class DefaultBuildPluginManager implements BuildPluginManager {
             PrintStream ps = new PrintStream(os);
             ps.println(
                     "A required class was missing while executing " + mojoDescriptor.getId() + ": " + e.getMessage());
-            pluginRealm.display(ps);
+            if (pluginRealm != null) {
+                pluginRealm.display(ps);
+            }
             Exception wrapper = new PluginContainerException(mojoDescriptor, pluginRealm, os.toString(), e);
             throw new PluginExecutionException(mojoExecution, project, wrapper);
         } catch (LinkageError e) {
+            // TODO: temporary debug logging for classpath plugin development
+            System.err.println("=== MOJO EXECUTION FAILED (LinkageError) ===");
+            e.printStackTrace(System.err);
             mojoExecutionListener.afterExecutionFailure(
                     new MojoExecutionEvent(session, project, mojoExecution, mojo, e));
             ByteArrayOutputStream os = new ByteArrayOutputStream(1024);
             PrintStream ps = new PrintStream(os);
             ps.println("An API incompatibility was encountered while executing " + mojoDescriptor.getId() + ": "
                     + e.getClass().getName() + ": " + e.getMessage());
-            pluginRealm.display(ps);
+            if (pluginRealm != null) {
+                pluginRealm.display(ps);
+            }
             Exception wrapper = new PluginContainerException(mojoDescriptor, pluginRealm, os.toString(), e);
             throw new PluginExecutionException(mojoExecution, project, wrapper);
         } catch (ClassCastException e) {
@@ -191,11 +211,26 @@ public class DefaultBuildPluginManager implements BuildPluginManager {
             PrintStream ps = new PrintStream(os);
             ps.println("A type incompatibility occurred while executing " + mojoDescriptor.getId() + ": "
                     + e.getMessage());
-            pluginRealm.display(ps);
+            if (pluginRealm != null) {
+                pluginRealm.display(ps);
+            }
             throw new PluginExecutionException(mojoExecution, project, os.toString(), e);
         } catch (RuntimeException e) {
             mojoExecutionListener.afterExecutionFailure(
                     new MojoExecutionEvent(session, project, mojoExecution, mojo, e));
+            // TODO: temporary debug logging for classpath plugin development
+            System.err.println("=== MOJO EXECUTION FAILED (RuntimeException) ===");
+            e.printStackTrace(System.err);
+            throw e;
+        } catch (Exception e) {
+            // TODO: temporary debug logging for classpath plugin development
+            System.err.println("=== MOJO EXECUTION FAILED (Exception) ===");
+            e.printStackTrace(System.err);
+            throw new PluginExecutionException(mojoExecution, project, e);
+        } catch (Error e) {
+            // TODO: temporary debug logging for classpath plugin development
+            System.err.println("=== MOJO EXECUTION FAILED (Error) ===");
+            e.printStackTrace(System.err);
             throw e;
         } finally {
             mavenPluginManager.releaseMojo(mojo, mojoExecution);

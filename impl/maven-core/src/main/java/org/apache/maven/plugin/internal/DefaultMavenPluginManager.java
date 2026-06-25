@@ -29,10 +29,12 @@ import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +59,7 @@ import org.apache.maven.api.services.PathScopeRegistry;
 import org.apache.maven.api.xml.XmlNode;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.classrealm.ClassRealmManager;
+import org.apache.maven.configuration.internal.EnhancedComponentConfigurator;
 import org.apache.maven.di.Injector;
 import org.apache.maven.di.Key;
 import org.apache.maven.execution.MavenSession;
@@ -149,6 +152,14 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
      */
     public static final String KEY_EXTENSIONS_REALMS = DefaultMavenPluginManager.class.getName() + "/extensionsRealms";
 
+    /**
+     * When true, plugins not found on the classpath fall back to remote resolution
+     * with isolated classloaders (original Maven behavior).
+     * When false (default), only classpath-bundled plugins are supported.
+     * Controlled by the MAVEN_DYNAMIC_LOADING environment variable.
+     */
+    public static final boolean DYNAMIC_LOADING = "true".equalsIgnoreCase(System.getenv("MAVEN_DYNAMIC_LOADING"));
+
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
     private final PlexusContainer container;
@@ -195,6 +206,147 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         this.prerequisitesCheckers = prerequisitesCheckers;
     }
 
+    // -- Classpath plugin registry --
+
+    private volatile Map<String, URL> classpathPlugins;
+
+    /**
+     * Returns the classpath URL of the plugin descriptor if this plugin is available on the classpath,
+     * or {@code null} if it needs to be resolved from a remote repository.
+     */
+    private URL getClasspathPluginDescriptorUrl(Plugin plugin) {
+        if (classpathPlugins == null) {
+            synchronized (this) {
+                if (classpathPlugins == null) {
+                    classpathPlugins = scanClasspathPlugins();
+                }
+            }
+        }
+        return classpathPlugins.get(plugin.getGroupId() + ":" + plugin.getArtifactId());
+    }
+
+    private Map<String, URL> scanClasspathPlugins() {
+        Map<String, URL> result = new HashMap<>();
+        try {
+            Enumeration<URL> urls = getClass().getClassLoader().getResources(getPluginDescriptorLocation());
+            while (urls.hasMoreElements()) {
+                URL url = urls.nextElement();
+                try {
+                    PluginDescriptor descriptor = buildPluginDescriptor(url::openStream, url.toString());
+                    String key = descriptor.getGroupId() + ":" + descriptor.getArtifactId();
+                    result.put(key, url);
+                    logger.debug("Found classpath plugin: {}", key);
+                } catch (Exception e) {
+                    logger.debug("Failed to parse classpath plugin descriptor at {}", url, e);
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("Failed to scan classpath for plugin descriptors", e);
+        }
+        logger.info("Classpath plugins available: {}", result.keySet());
+        return result;
+    }
+
+    /**
+     * Builds a plugin descriptor with the core realm as the thread context classloader. The descriptor is XML and is
+     * parsed via StAX, whose {@code XMLInputFactory.newFactory()} resolves its provider (Woodstox) through the context
+     * classloader. Woodstox is a core-internal dependency that is deliberately not exported to plugin/project realms,
+     * so the parse must run under the core realm -- as it does in stock Maven -- rather than whatever realm happens to
+     * be current during plugin resolution (typically the project realm, from which Woodstox is not visible).
+     */
+    private PluginDescriptor buildPluginDescriptor(PluginDescriptorBuilder.StreamSupplier is, String descriptorLocation)
+            throws PlexusConfigurationException {
+        Thread thread = Thread.currentThread();
+        ClassLoader prev = thread.getContextClassLoader();
+        try {
+            thread.setContextClassLoader(classRealmManager.getCoreRealm());
+            return builder.build(is, descriptorLocation);
+        } finally {
+            thread.setContextClassLoader(prev);
+        }
+    }
+
+    /**
+     * Builds a list of Surefire artifact references by locating their JARs in ${maven.home}/lib/.
+     * Surefire looks up these artifacts by groupId:artifactId in pluginDescriptor.getArtifactMap()
+     * to find JARs it needs to fork test processes (e.g. surefire-booter).
+     */
+    private volatile List<Artifact> surefireArtifactsCache;
+
+    private List<Artifact> buildSurefireArtifacts() {
+        if (surefireArtifactsCache != null) {
+            return surefireArtifactsCache;
+        }
+        synchronized (this) {
+            if (surefireArtifactsCache != null) {
+                return surefireArtifactsCache;
+            }
+            String mavenHome = System.getProperty("maven.home");
+            if (mavenHome == null) {
+                throw new IllegalStateException("maven.home not set, cannot build classpath artifacts list");
+            }
+            Path libDir = Path.of(mavenHome, "lib");
+            if (!Files.isDirectory(libDir)) {
+                throw new IllegalStateException("maven.home/lib not found: " + libDir);
+            }
+
+            // Hardcoded list of Surefire artifacts that it looks up by groupId:artifactId
+            // in pluginArtifactMap. We locate each JAR in lib/ by filename.
+            // If Surefire version changes, this list may need to be updated.
+            String[][] surefireArtifacts = {
+                {"org.apache.maven.surefire", "maven-surefire-common"},
+                {"org.apache.maven.surefire", "surefire-booter"},
+                {"org.apache.maven.surefire", "surefire-extensions-api"},
+                {"org.apache.maven.surefire", "surefire-api"},
+                {"org.apache.maven.surefire", "surefire-extensions-spi"},
+                {"org.apache.maven.surefire", "surefire-logger-api"},
+                {"org.apache.maven.surefire", "surefire-shared-utils"},
+            };
+
+            List<Artifact> artifacts = new ArrayList<>();
+            List<String> missing = new ArrayList<>();
+
+            for (String[] ga : surefireArtifacts) {
+                String artifactId = ga[1];
+                // Find JAR in lib/ matching <artifactId>-<version>.jar
+                try (var jars = Files.list(libDir)) {
+                    var jarPath = jars.filter(p -> {
+                                String name = p.getFileName().toString();
+                                return name.startsWith(artifactId + "-") && name.endsWith(".jar");
+                            })
+                            .findFirst();
+                    if (jarPath.isPresent()) {
+                        String fileName = jarPath.get().getFileName().toString();
+                        String version = fileName.substring(artifactId.length() + 1, fileName.length() - 4);
+                        var artifact = new org.apache.maven.artifact.DefaultArtifact(
+                                ga[0],
+                                artifactId,
+                                version,
+                                "compile",
+                                "jar",
+                                null,
+                                new org.apache.maven.artifact.handler.DefaultArtifactHandler("jar"));
+                        artifact.setFile(jarPath.get().toFile());
+                        artifacts.add(artifact);
+                    } else {
+                        missing.add(ga[0] + ":" + artifactId);
+                    }
+                } catch (IOException e) {
+                    throw new IllegalStateException("Failed to scan lib directory: " + libDir, e);
+                }
+            }
+
+            if (!missing.isEmpty()) {
+                throw new IllegalStateException("Required surefire artifacts not found in " + libDir + ":\n"
+                        + missing.stream().map(m -> "  - " + m).collect(Collectors.joining("\n")));
+            }
+
+            logger.info("Built {} surefire classpath artifacts from {}", artifacts.size(), libDir);
+            surefireArtifactsCache = artifacts;
+            return surefireArtifactsCache;
+        }
+    }
+
     @Override
     public PluginDescriptor getPluginDescriptor(
             Plugin plugin, List<RemoteRepository> repositories, RepositorySystemSession session)
@@ -202,6 +354,27 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         PluginDescriptorCache.Key cacheKey = pluginDescriptorCache.createKey(plugin, repositories, session);
 
         PluginDescriptor pluginDescriptor = pluginDescriptorCache.get(cacheKey, () -> {
+            URL classpathDescriptorUrl = getClasspathPluginDescriptorUrl(plugin);
+            if (classpathDescriptorUrl != null) {
+                // Plugin is on the classpath — parse descriptor directly, skip remote resolution
+                logger.info(
+                        "Loading plugin descriptor for {} from classpath: {}", plugin.getId(), classpathDescriptorUrl);
+                return parsePluginDescriptor(
+                        classpathDescriptorUrl::openStream, plugin, classpathDescriptorUrl.toString());
+            }
+
+            if (!DYNAMIC_LOADING) {
+                throw new PluginResolutionException(
+                        plugin,
+                        List.of(new IllegalStateException(
+                                "Plugin " + plugin.getId() + " is not available on the classpath. "
+                                        + "Only classpath-bundled plugins are supported. "
+                                        + "Set MAVEN_DYNAMIC_LOADING=true to enable remote resolution.")),
+                        null);
+            }
+
+            // Fallback: remote resolution (original Maven behavior)
+            logger.info("Running plugin descriptor standard maven way (dynamic classloading): {}", plugin.getId());
             org.eclipse.aether.artifact.Artifact artifact =
                     pluginDependenciesResolver.resolve(plugin, repositories, session);
 
@@ -280,7 +453,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             PluginDescriptorBuilder.StreamSupplier is, Plugin plugin, String descriptorLocation)
             throws PluginDescriptorParsingException {
         try {
-            return builder.build(is, descriptorLocation);
+            return buildPluginDescriptor(is, descriptorLocation);
         } catch (PlexusConfigurationException e) {
             throw new PluginDescriptorParsingException(plugin, descriptorLocation, e);
         }
@@ -362,7 +535,64 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
 
             pluginDescriptor.setClassRealm(pluginRealm);
             pluginDescriptor.setArtifacts(pluginArtifacts);
+        } else if (getClasspathPluginDescriptorUrl(plugin) != null) {
+            // Classpath plugin: all classes are on the flat classpath, no remote resolution,
+            // no isolated ClassRealm with dynamic JAR loading.
+            // Supported: JSR-330 based plugins (@Named, @Inject).
+            // NOT supported: legacy Plexus plugins (@Component, @Requirement) — these require
+            // discoverComponents() with a dedicated ClassRealm, which is not available here.
+            boolean allV4 = pluginDescriptor.getMojos().stream().allMatch(MojoDescriptor::isV4Api);
+            logger.info(
+                    "Classpath plugin {} — mojos: {}, allV4: {}",
+                    plugin.getId(),
+                    pluginDescriptor.getMojos().stream()
+                            .map(m -> m.getGoal() + "(v4=" + m.isV4Api() + ")")
+                            .collect(java.util.stream.Collectors.joining(", ")),
+                    allV4);
+
+            if (allV4) {
+                // V4 plugins: use plain ClassLoader, no ClassRealm needed.
+                // V4 mojos are instantiated via Maven DI Injector.discover(ClassLoader).
+                pluginDescriptor.setClassLoader(getClass().getClassLoader());
+            } else {
+                // V3 plugins: use containerRealm (core realm) as a thin wrapper.
+                // No URLs are added — all class loading delegates to the app classloader.
+                // Register V3 mojos in the Plexus container so container.lookup() finds them.
+                // NOTE: discoverComponents() is NOT called — plugin @Named classes are already
+                // discovered from the flat classpath during container startup.
+                // Legacy Plexus plugins using @Component/@Requirement are NOT supported.
+                ClassRealm coreRealm = classRealmManager.getCoreRealm();
+                try {
+                    for (MojoDescriptor mojo : pluginDescriptor.getMojos()) {
+                        if (!mojo.isV4Api()) {
+                            mojo.setRealm(coreRealm);
+                            container.addComponentDescriptor(mojo);
+                        }
+                    }
+                } catch (CycleDetectedInComponentGraphException e) {
+                    throw new PluginContainerException(
+                            plugin,
+                            coreRealm,
+                            "Error in component graph of plugin " + plugin.getId() + ": " + e.getMessage(),
+                            e);
+                }
+                pluginDescriptor.setClassRealm(coreRealm);
+            }
+            if ("org.apache.maven.plugins".equals(plugin.getGroupId())
+                    && "maven-surefire-plugin".equals(plugin.getArtifactId())) {
+                pluginDescriptor.setArtifacts(buildSurefireArtifacts());
+            }
         } else {
+            if (!DYNAMIC_LOADING) {
+                throw new PluginResolutionException(
+                        plugin,
+                        List.of(new IllegalStateException(
+                                "Plugin " + plugin.getId() + " is not available on the classpath. "
+                                        + "Set MAVEN_DYNAMIC_LOADING=true to enable remote resolution.")),
+                        null);
+            }
+
+            // Fallback: remote resolution with isolated ClassRealm (original Maven behavior)
             boolean v4api = pluginDescriptor.getMojos().stream().anyMatch(MojoDescriptor::isV4Api);
             Map<String, ClassLoader> foreignImports = calcImports(project, parent, imports, v4api);
 
@@ -391,6 +621,11 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         }
     }
 
+    /**
+     * Creates an isolated ClassRealm for a remotely-resolved plugin.
+     * NOT used for classpath plugins. Legacy Plexus plugins that require isolated realms
+     * with dynamic JAR loading are not supported in the classpath-only mode.
+     */
     private void createPluginRealm(
             PluginDescriptor pluginDescriptor,
             MavenSession session,
@@ -431,6 +666,13 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         pluginDescriptor.setArtifacts(pluginArtifacts);
     }
 
+    /**
+     * Discovers plugin components by scanning the given ClassRealm.
+     * This is used for remotely-resolved plugins that have their own isolated ClassRealm.
+     * NOT used for classpath plugins — their classes are already on the flat classpath
+     * and discovered during container startup. Legacy Plexus plugins (@Component/@Requirement)
+     * that require this method are not supported on the classpath.
+     */
     private void discoverPluginComponents(
             final ClassRealm pluginRealm, Plugin plugin, PluginDescriptor pluginDescriptor)
             throws PluginContainerException {
@@ -503,9 +745,11 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
 
         PluginDescriptor pluginDescriptor = mojoDescriptor.getPluginDescriptor();
 
+        ClassLoader pluginClassLoader = pluginDescriptor.getPluginClassLoader();
         ClassRealm pluginRealm = pluginDescriptor.getClassRealm();
 
-        if (pluginRealm == null) {
+        if (pluginClassLoader == null) {
+            // Neither classLoader nor classRealm set — trigger setup
             try {
                 setupPluginRealm(pluginDescriptor, session, null, null, null);
             } catch (PluginResolutionException e) {
@@ -513,30 +757,33 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                         + ", pluginDescriptor=" + pluginDescriptor.getId() + "]";
                 throw new PluginConfigurationException(pluginDescriptor, msg, e);
             }
+            pluginClassLoader = pluginDescriptor.getPluginClassLoader();
             pluginRealm = pluginDescriptor.getClassRealm();
         }
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Loading mojo " + mojoDescriptor.getId() + " from plugin realm " + pluginRealm);
+            logger.debug("Loading mojo " + mojoDescriptor.getId() + " from plugin classloader " + pluginClassLoader);
         }
 
-        // We are forcing the use of the plugin realm for all lookups that might occur during
-        // the lifecycle that is part of the lookup. Here we are specifically trying to keep
-        // lookups that occur in contextualize calls in line with the right realm.
-        ClassRealm oldLookupRealm = container.setLookupRealm(pluginRealm);
-
         ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(pluginRealm);
+        Thread.currentThread().setContextClassLoader(pluginClassLoader);
+
+        // For ClassRealm-based plugins (V3), set the Plexus lookup realm.
+        // For classpath plugins (V4 only, no ClassRealm), skip Plexus lookup realm.
+        ClassRealm oldLookupRealm = pluginRealm != null ? container.setLookupRealm(pluginRealm) : null;
 
         try {
             if (mojoDescriptor.isV4Api()) {
-                return loadV4Mojo(mojoInterface, session, mojoExecution, mojoDescriptor, pluginDescriptor, pluginRealm);
+                return loadV4Mojo(
+                        mojoInterface, session, mojoExecution, mojoDescriptor, pluginDescriptor, pluginClassLoader);
             } else {
                 return loadV3Mojo(mojoInterface, session, mojoExecution, mojoDescriptor, pluginDescriptor, pluginRealm);
             }
         } finally {
             Thread.currentThread().setContextClassLoader(oldClassLoader);
-            container.setLookupRealm(oldLookupRealm);
+            if (oldLookupRealm != null) {
+                container.setLookupRealm(oldLookupRealm);
+            }
         }
     }
 
@@ -546,7 +793,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             MojoExecution mojoExecution,
             MojoDescriptor mojoDescriptor,
             PluginDescriptor pluginDescriptor,
-            ClassRealm pluginRealm)
+            ClassLoader pluginClassLoader)
             throws PluginContainerException, PluginConfigurationException {
         T mojo;
 
@@ -558,7 +805,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                 LoggerFactory.getLogger(mojoExecution.getMojoDescriptor().getFullGoalName()));
         try {
             Injector injector = Injector.create();
-            injector.discover(pluginRealm);
+            injector.discover(pluginClassLoader);
             // Add known classes
             // TODO: get those from the existing plexus scopes ?
             injector.bindInstance(Session.class, sessionV4);
@@ -569,11 +816,18 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
             Map<Class<? extends Service>, Supplier<? extends Service>> services = sessionV4.getAllServices();
             services.forEach((itf, svc) -> injector.bindSupplier((Class<Service>) itf, (Supplier<Service>) svc));
 
-            mojo = mojoInterface.cast(injector.getInstance(
-                    Key.of(mojoDescriptor.getImplementationClass(), mojoDescriptor.getRoleHint())));
+            // Load implementation class explicitly via pluginClassLoader.
+            // mojoDescriptor.getImplementationClass() uses the descriptor's ClassRealm,
+            // which is null for classpath plugins, so we load it ourselves.
+            Class<?> implClass = mojoDescriptor.getImplementationClass();
+            if (implClass == null) {
+                implClass = pluginClassLoader.loadClass(mojoDescriptor.getImplementation());
+            }
+            mojo = mojoInterface.cast(injector.getInstance(Key.of(implClass, mojoDescriptor.getRoleHint())));
 
         } catch (Exception e) {
-            throw new PluginContainerException(mojoDescriptor, pluginRealm, "Unable to lookup Mojo", e);
+            throw new PluginContainerException(
+                    mojoDescriptor, pluginDescriptor.getClassRealm(), "Unable to lookup Mojo", e);
         }
 
         XmlNode dom = mojoExecution.getConfiguration() != null
@@ -599,7 +853,7 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                 mojo,
                 mojoExecution.getExecutionId(),
                 mojoDescriptor,
-                pluginRealm,
+                pluginClassLoader,
                 pomConfiguration,
                 expressionEvaluator);
 
@@ -679,6 +933,12 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         return mojo;
     }
 
+    /**
+     * Loads a V3 mojo via Plexus container lookup.
+     * For classpath plugins, the mojo must be JSR-330 based (@Named, @Inject).
+     * Legacy Plexus plugins using @Component/@Requirement are NOT supported on the classpath
+     * — they require discoverComponents() with an isolated ClassRealm.
+     */
     private <T> T loadV3Mojo(
             Class<T> mojoInterface,
             MavenSession session,
@@ -746,6 +1006,16 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
         }
 
         if (mojo instanceof Contextualizable) {
+            // Contextualizable is a legacy Plexus interface — not supported for classpath plugins.
+            if (pluginDescriptor.getClassRealm() == classRealmManager.getCoreRealm()) {
+                throw new PluginContainerException(
+                        mojoDescriptor,
+                        pluginRealm,
+                        "Mojo '" + mojoDescriptor.getGoal() + "' in plugin '" + pluginDescriptor.getId()
+                                + "' implements legacy Plexus Contextualizable interface, "
+                                + "which is not supported for classpath plugins.",
+                        (Throwable) null);
+            }
             pluginValidationManager.reportPluginMojoValidationIssue(
                     PluginValidationManager.IssueLocality.EXTERNAL,
                     session,
@@ -869,6 +1139,51 @@ public class DefaultMavenPluginManager implements MavenPluginManager {
                     logger.debug("Failed to release mojo configurator - ignoring.");
                 }
             }
+        }
+    }
+
+    /**
+     * ClassLoader-based overload for V4 classpath plugins that don't have a ClassRealm.
+     * Uses EnhancedComponentConfigurator's ClassLoader-accepting method directly.
+     */
+    private void populateMojoExecutionFields(
+            Object mojo,
+            String executionId,
+            MojoDescriptor mojoDescriptor,
+            ClassLoader classLoader,
+            PlexusConfiguration configuration,
+            ExpressionEvaluator expressionEvaluator)
+            throws PluginConfigurationException {
+        try {
+            EnhancedComponentConfigurator configurator = new EnhancedComponentConfigurator();
+
+            ConfigurationListener listener = new DebugConfigurationListener(logger);
+
+            ValidatingConfigurationListener validator =
+                    new ValidatingConfigurationListener(mojo, mojoDescriptor, listener);
+
+            if (logger.isDebugEnabled()) {
+                logger.debug("Configuring mojo execution '" + mojoDescriptor.getId() + ':' + executionId
+                        + "' with enhanced configurator (classpath mode) -->");
+            }
+
+            configurator.configureComponent(mojo, configuration, expressionEvaluator, classLoader, validator);
+
+            logger.debug("-- end configuration --");
+
+            Collection<Parameter> missingParameters = validator.getMissingParameters();
+            if (!missingParameters.isEmpty()) {
+                validateParameters(mojoDescriptor, configuration, expressionEvaluator);
+            }
+
+        } catch (ComponentConfigurationException e) {
+            String message = "Unable to parse configuration of mojo " + mojoDescriptor.getId();
+            if (e.getFailedConfiguration() != null) {
+                message += " for parameter " + e.getFailedConfiguration().getName();
+            }
+            message += ": " + e.getMessage();
+
+            throw new PluginConfigurationException(mojoDescriptor.getPluginDescriptor(), message, e);
         }
     }
 

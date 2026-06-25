@@ -43,6 +43,7 @@ import org.apache.maven.plugin.PluginDescriptorParsingException;
 import org.apache.maven.plugin.PluginNotFoundException;
 import org.apache.maven.plugin.PluginResolutionException;
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
+import org.apache.maven.plugin.internal.DefaultMavenPluginManager;
 import org.apache.maven.project.MavenProject;
 
 /**
@@ -109,6 +110,8 @@ public class DefaultLifecycleMappingDelegate implements LifecycleMappingDelegate
          * not interested in any of the executions bound to it.
          */
 
+        List<String> missingPlugins = new ArrayList<>();
+
         for (Plugin plugin : project.getBuild().getPlugins()) {
             for (PluginExecution execution : plugin.getExecutions()) {
                 // if the phase is specified then I don't have to go fetch the plugin yet and pull it down
@@ -134,23 +137,44 @@ public class DefaultLifecycleMappingDelegate implements LifecycleMappingDelegate
                 // if not then I need to grab the mojo descriptor and look at the phase that is specified
                 else {
                     for (String goal : execution.getGoals()) {
-                        MojoDescriptor mojoDescriptor = pluginManager.getMojoDescriptor(
-                                plugin, goal, project.getRemotePluginRepositories(), session.getRepositorySession());
+                        try {
+                            MojoDescriptor mojoDescriptor = pluginManager.getMojoDescriptor(
+                                    plugin,
+                                    goal,
+                                    project.getRemotePluginRepositories(),
+                                    session.getRepositorySession());
 
-                        phase = mojoDescriptor.getPhase();
-                        if (aliases.containsKey(phase)) {
-                            phase = aliases.get(phase);
-                        }
-                        Map<PhaseId, List<MojoExecution>> phaseBindings = getPhaseBindings(mappings, phase);
-                        if (phaseBindings != null) {
-                            MojoExecution mojoExecution = new MojoExecution(mojoDescriptor, execution.getId());
-                            mojoExecution.setLifecyclePhase(phase);
-                            PhaseId phaseId = PhaseId.of(phase + "[" + execution.getPriority() + "]");
-                            addMojoExecution(phaseBindings, mojoExecution, phaseId);
+                            phase = mojoDescriptor.getPhase();
+                            if (aliases.containsKey(phase)) {
+                                phase = aliases.get(phase);
+                            }
+                            Map<PhaseId, List<MojoExecution>> phaseBindings = getPhaseBindings(mappings, phase);
+                            if (phaseBindings != null) {
+                                MojoExecution mojoExecution = new MojoExecution(mojoDescriptor, execution.getId());
+                                mojoExecution.setLifecyclePhase(phase);
+                                PhaseId phaseId = PhaseId.of(phase + "[" + execution.getPriority() + "]");
+                                addMojoExecution(phaseBindings, mojoExecution, phaseId);
+                            }
+                        } catch (PluginResolutionException e) {
+                            if (DefaultMavenPluginManager.DYNAMIC_LOADING) {
+                                throw e;
+                            }
+                            String pluginId = plugin.getId();
+                            if (!missingPlugins.contains(pluginId)) {
+                                missingPlugins.add(pluginId);
+                            }
                         }
                     }
                 }
             }
+        }
+
+        if (!missingPlugins.isEmpty()) {
+            throw new PluginResolutionException(
+                    project.getBuild().getPlugins().get(0),
+                    List.of(new IllegalStateException("The following plugins are not available on the classpath:\n"
+                            + missingPlugins.stream().map(p -> "  - " + p).collect(Collectors.joining("\n")))),
+                    null);
         }
 
         Map<String, List<MojoExecution>> lifecycleMappings = new LinkedHashMap<>();

@@ -1,0 +1,87 @@
+name: Build and Release Native Maven
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest-32-cores
+            artifact: nmvn-linux-x86_64
+          - os: ubuntu-latest-32-cores-arm64
+            artifact: nmvn-linux-aarch64
+          - os: macos-arm64-cipool
+            artifact: nmvn-macos-aarch64
+          - os: windows-latest-16-cores
+            artifact: nmvn-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Strip SNAPSHOT from versions
+        run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
+
+      - name: Build Maven distribution
+        run: ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+
+      - name: Clean previous build
+        run: rm -rf build/
+
+      - name: Build native image
+        run: |
+          chmod +x build-nmvn-no-crema.sh
+          LAUNCHER=scripts/elide/mvn ./build-nmvn-no-crema.sh
+
+      - name: Package artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mv build maven
+          zip -r ${{ matrix.artifact }}-${{ github.sha }}.zip maven/
+
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Rename-Item build maven
+          Compress-Archive -Path maven -DestinationPath ${{ matrix.artifact }}-${{ github.sha }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}-${{ github.sha }}.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: "Publish to R2"
+        uses: elide-tools/r2-upload-action@main
+        with:
+          path: "."
+          target: "native-maven"
+          bucket: "elide-userdata-public"
+          account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}

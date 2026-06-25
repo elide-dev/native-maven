@@ -386,10 +386,14 @@ public abstract class LookupInvoker<C extends LookupContext> implements Invoker 
      * Override this method to add some special handling for "raw streams" <em>disabled</em> option.
      */
     protected void doConfigureWithTerminalWithRawStreamsDisabled(C context) {
-        MavenSimpleLogger stdout = (MavenSimpleLogger) context.loggerFactory.getLogger("stdout");
-        MavenSimpleLogger stderr = (MavenSimpleLogger) context.loggerFactory.getLogger("stderr");
-        stdout.setLogLevel(LocationAwareLogger.INFO_INT);
-        stderr.setLogLevel(LocationAwareLogger.INFO_INT);
+        org.slf4j.Logger stdout = context.loggerFactory.getLogger("stdout");
+        org.slf4j.Logger stderr = context.loggerFactory.getLogger("stderr");
+        if (stdout instanceof MavenSimpleLogger mslOut) {
+            mslOut.setLogLevel(LocationAwareLogger.INFO_INT);
+        }
+        if (stderr instanceof MavenSimpleLogger mslErr) {
+            mslErr.setLogLevel(LocationAwareLogger.INFO_INT);
+        }
         PrintStream psOut = new LoggingOutputStream(s -> stdout.info("[stdout] " + s)).printStream();
         context.closeables.add(() -> LoggingOutputStream.forceFlush(psOut));
         PrintStream psErr = new LoggingOutputStream(s -> stderr.warn("[stderr] " + s)).printStream();

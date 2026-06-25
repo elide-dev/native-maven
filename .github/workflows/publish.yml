@@ -1,0 +1,40 @@
+name: Publish to GitHub Packages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Clean workspace
+        run: rm -rf "$GITHUB_WORKSPACE"/*
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Strip SNAPSHOT from versions
+        run: find . -name 'pom.xml' -exec sed -i 's/-SNAPSHOT//g' {} +
+
+      - name: Build and publish
+        run: >
+          mvn deploy
+          -B
+          -DskipTests
+          -Drat.skip=true
+          -DaltDeploymentRepository=github::https://maven.pkg.github.com/elide-dev/native-maven
+          --settings .github/settings.xml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
