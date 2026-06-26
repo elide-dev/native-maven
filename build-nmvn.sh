@@ -83,19 +83,67 @@ done
 
 # -H:Preserve=all explicitly excludes all tooling modules such as the java.compiler and all internal modules (see: substratevm/src/com.oracle.svm.hosted/src/com/oracle/svm/hosted/image/PreserveOptionsSupport.java)
 
+#native-image \
+#  -classpath "$CLASSPATH" \
+#  -Dguice_bytecode_gen_option=DISABLED \
+#  -H:+UnlockExperimentalVMOptions \
+#  -H:+AllowJRTFileSystem \
+#  -H:+RuntimeClassLoading \
+#  -H:+GraalJITCompileAtRuntime \
+#  -H:EnableURLProtocols=jar \
+#  -H:ConfigurationFileDirectories=reflection-crema \
+#  -H:Preserve=all \
+#  -H:Preserve=module=java.compiler \
+#  -H:Preserve=module=jdk.compiler \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED \
+#  --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
+#  --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
+#  --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
+#  --initialize-at-build-time=org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool \
+#  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary,jdk.internal.jrtfs.SystemImage \
+#  org.apache.maven.cling.MavenCling \
+#  nmvn-native
+
+# Optimization level. With targeted Preserve the build is CPU/work-bound (it already
+# uses all RAM + cores), so the optimization level is the main build-time lever.
+#   OPT=b  -> quick build, fastest compile, slower runtime  (default; use while iterating)
+#   OPT=2  -> default optimizations, slower build           (use for a release image)
+#   OPT=3  -> aggressive optimizations, slowest build
+# Override per-invocation:  OPT=2 ./build-nmvn.sh
+OPT="${OPT:-b}"
+echo "Building nmvn-native with -O${OPT} (override with OPT=2 for a release build)"
+
+START=$SECONDS
 native-image \
   -classpath "$CLASSPATH" \
+  -O"${OPT}" \
   -Dguice_bytecode_gen_option=DISABLED \
-  --enable-https \
   -H:+UnlockExperimentalVMOptions \
   -H:+AllowJRTFileSystem \
   -H:+RuntimeClassLoading \
   -H:+GraalJITCompileAtRuntime \
   -H:EnableURLProtocols=jar \
   -H:ConfigurationFileDirectories=reflection-crema \
-  -H:Preserve=all \
+  -H:Preserve=module=java.base \
+  -H:Preserve=module=java.logging \
+  -H:Preserve=module=java.xml \
+  -H:Preserve=module=java.desktop \
   -H:Preserve=module=java.compiler \
   -H:Preserve=module=jdk.compiler \
+  -H:Preserve=package=org.apache.maven.* \
+  -H:Preserve=package=com.ctc.wstx.* \
+  -H:Preserve=package=org.apache.commons.logging.impl.* \
+  -H:Preserve=package=org.eclipse.aether.* \
+  -H:Preserve=package=org.slf4j.* \
+  -H:Preserve=package=org.codehaus.plexus.* \
   --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
   --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
   --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
