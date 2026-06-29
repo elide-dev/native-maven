@@ -1,0 +1,93 @@
+#!/bin/bash
+#
+# Launcher for the prebuilt-plugins native image (nmvn-native).
+#
+# The native image's entry point is the ClassWorlds Launcher
+# (org.codehaus.plexus.classworlds.launcher.Launcher), so the wrapper must hand it the
+# classworlds config (m2.conf) and the real main class, exactly like a normal Maven boot.
+# m2.conf builds the plexus.core realm and dispatches to org.apache.maven.cling.MavenCling.
+
+# --- Resolve script directory (follow symlinks) ---
+PRG="$0"
+while [ -h "$PRG" ]; do
+  ls=$(ls -ld "$PRG")
+  link=$(expr "$ls" : '.*-> \(.*\)$')
+  if expr "$link" : '/.*' > /dev/null; then
+    PRG="$link"
+  else
+    PRG="$(dirname "$PRG")/$link"
+  fi
+done
+
+SCRIPT_DIR=$(cd "$(dirname "$PRG")" && pwd)
+TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
+MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
+
+if [ ! -x "$SCRIPT_DIR/nmvn-native" ]; then
+  echo "Error: native binary not found at $SCRIPT_DIR/nmvn-native"
+  echo "Run: ./build-nmvn-prebuilt.sh"
+  exit 1
+fi
+
+if [ ! -d "$MAVEN_HOME" ]; then
+  echo "Error: Maven home not found at $MAVEN_HOME"
+  echo "Run: ./build-nmvn-prebuilt.sh"
+  exit 1
+fi
+
+if [ -z "$JAVA_HOME" ]; then
+  echo "Error: JAVA_HOME is not set."
+  echo "Set it with: export JAVA_HOME=/path/to/jdk"
+  exit 1
+fi
+
+# --- Find project base directory (.mvn marker) ---
+find_file_argument_basedir() {
+  local basedir
+  basedir=$(pwd)
+  local found_file_switch=0
+  for arg in "$@"; do
+    if [ $found_file_switch -eq 1 ]; then
+      if [ -d "$arg" ]; then
+        basedir=$(cd "$arg" && pwd -P)
+      elif [ -f "$arg" ]; then
+        basedir=$(cd "$(dirname "$arg")" && pwd -P)
+      fi
+      break
+    fi
+    if [ "$arg" = "-f" ] || [ "$arg" = "--file" ]; then
+      found_file_switch=1
+    fi
+  done
+  echo "$basedir"
+}
+
+find_maven_basedir() {
+  local basedir
+  basedir=$(find_file_argument_basedir "$@")
+  local wdir="$basedir"
+  while : ; do
+    if [ -d "$wdir/.mvn" ]; then
+      basedir="$wdir"
+      break
+    fi
+    if [ "$wdir" = "/" ]; then
+      break
+    fi
+    wdir=$(cd "$wdir/.." && pwd)
+  done
+  echo "$basedir"
+}
+
+MAVEN_PROJECTBASEDIR=$(find_maven_basedir "$@")
+
+"$SCRIPT_DIR/nmvn-native" \
+  -Dclassworlds.conf="$MAVEN_HOME/bin/m2.conf" \
+  -Dmaven.mainClass=org.apache.maven.cling.MavenCling \
+  -Dlibrary.jline.path="$MAVEN_HOME/lib/jline-native" \
+  -Dguice_bytecode_gen_option=DISABLED \
+  -Djava.home="$JAVA_HOME" \
+  -Dmaven.home="$MAVEN_HOME" \
+  -Dmaven.conf="$MAVEN_HOME/conf" \
+  -Dmaven.multiModuleProjectDirectory="$MAVEN_PROJECTBASEDIR" \
+  "$@"

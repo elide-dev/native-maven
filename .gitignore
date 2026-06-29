@@ -22,3 +22,9 @@
 # Mac
 .DS_Store
 
+
+# nmvn (native-maven) build artifacts
+/.prebuilt-work/
+/prebuilt-feature/classes/
+/nmvn-native
+/lib*.dylib
