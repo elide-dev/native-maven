@@ -26,6 +26,10 @@ import org.eclipse.sisu.Priority;
  * realm-less until setupPluginRealm and avoids shared mutable state; the shallow MojoDescriptor
  * clone preserves the build-time-pinned implementation classes). Non-prebuilt plugins delegate to
  * the stock implementation unchanged.
+ *
+ * <p>Prebuilt routing applies only when the project adds no extra per-plugin {@code <dependencies>}
+ * and the plugin is not an extensions plugin — the same predicate as {@link PrebuiltPluginRealmCache},
+ * so a plugin is either fully prebuilt (descriptor + realm) or fully dynamic, never mixed.
  */
 @Named
 @Singleton
@@ -48,10 +52,17 @@ public class PrebuiltPluginDescriptorCache extends DefaultPluginDescriptorCache 
 
     @Override
     public Key createKey(Plugin plugin, List<RemoteRepository> repositories, RepositorySystemSession session) {
-        PrebuiltPluginRealms.Prebuilt prebuilt =
-                PrebuiltPluginRealms.match(plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion());
-        if (prebuilt != null) {
-            return new PrebuiltKey(prebuilt);
+        // Same routing predicate as PrebuiltPluginRealmCache: a plugin is either fully prebuilt or
+        // fully dynamic. Serving a baked descriptor (which has no pluginArtifact) while the realm
+        // side falls back to stock createPluginRealm would NPE on getPluginArtifact(). Extra
+        // per-plugin <dependencies> and <extensions>true</extensions> both take dynamic realm
+        // paths, so they must get a dynamic descriptor too.
+        if (plugin.getDependencies().isEmpty() && !plugin.isExtensions()) {
+            PrebuiltPluginRealms.Prebuilt prebuilt =
+                    PrebuiltPluginRealms.match(plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion());
+            if (prebuilt != null) {
+                return new PrebuiltKey(prebuilt);
+            }
         }
         return super.createKey(plugin, repositories, session);
     }
