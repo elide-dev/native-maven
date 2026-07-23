@@ -1,9 +1,15 @@
 package nmvn;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,10 +18,14 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
+import org.apache.maven.artifact.Artifact;
+import org.apache.maven.artifact.DefaultArtifact;
+import org.apache.maven.artifact.handler.DefaultArtifactHandler;
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
 import org.apache.maven.plugin.descriptor.PluginDescriptor;
 import org.apache.maven.plugin.descriptor.PluginDescriptorBuilder;
@@ -73,13 +83,34 @@ public final class PrebuiltPluginRealms {
         public final Map<String, Class<?>> classes;
 
         /**
-         * Plugin-internal components (e.g. plexus-compiler's CompilerManager), parsed from the jars'
-         * {@code META-INF/sisu/javax.inject.Named} indexes at build time with PINNED implementation
-         * classes. Stock discovery would read the index and load these BY NAME through the realm at
-         * runtime — both impossible on a frozen realm — so they are baked instead and registered via
-         * ComponentDescriptorBeanModule (which takes the LoadedClass path for pinned descriptors).
+         * Plugin-internal components declared in legacy {@code META-INF/plexus/components.xml}
+         * (e.g. org.sonatype plexus-build-api's BuildContext, injected by maven-filtering), parsed
+         * at build time with PINNED implementation classes. Stock discovery would parse the XML
+         * through the realm at runtime — impossible on a frozen realm — so they are baked instead
+         * and registered via ComponentDescriptorBeanModule (LoadedClass path for pinned
+         * descriptors).
          */
         public final List<ComponentDescriptor<?>> components;
+
+        /**
+         * Classes listed in the jars' {@code META-INF/sisu/javax.inject.Named} indexes (e.g.
+         * plexus-compiler's CompilerManager), pinned at build time. Published via
+         * QualifiedTypeBinder — the SAME binder stock sisu index scanning uses — because
+         * synthesizing ComponentDescriptors for them changes provisioning semantics: a descriptor
+         * whose role IS the implementation binds {@code named(hint) -> raw type}, and a raw
+         * injection point (surefire's ProviderDetector injecting the concrete ServiceLoader) then
+         * resolves through LocatorWiring back into that same binding — a self-referential circle
+         * Guice can only break by proxying, impossible for a concrete class.
+         */
+        public final List<Class<?>> indexedClasses;
+
+        /**
+         * The realm jars as resolved plugin {@link Artifact}s (GAV from each jar's pom.properties,
+         * local-repo path layout as fallback). Served in the realm CacheRecord so
+         * {@code pluginDescriptor.getArtifacts()} — and with it surefire's pluginArtifactMap
+         * lookup of surefire-booter for the forked JVM — works like on a dynamic realm.
+         */
+        public final List<Artifact> artifacts;
 
         /** Runtime once-guard: set after the realm's beans are published to the container. */
         public volatile boolean published;
@@ -88,27 +119,39 @@ public final class PrebuiltPluginRealms {
                 PluginDescriptor descriptor,
                 ClassRealm realm,
                 Map<String, Class<?>> classes,
-                List<ComponentDescriptor<?>> components) {
+                List<ComponentDescriptor<?>> components,
+                List<Class<?>> indexedClasses,
+                List<Artifact> artifacts) {
             this.descriptor = descriptor;
             this.realm = realm;
             this.classes = classes;
             this.components = components;
+            this.indexedClasses = indexedClasses;
+            this.artifacts = artifacts;
         }
     }
 
     /**
-     * Serves the baked class map by name. Installed as an IMPORT on the frozen realm for every
-     * plugin package: classworlds consults imports BEFORE the (dead) self and the parent, which
-     * makes {@code realm.loadClass(pluginClassName)} work again at runtime — required by sisu's
+     * Serves the baked class map by name and the baked jar RESOURCES by path. Installed as an
+     * IMPORT on the frozen realm for every plugin package and resource directory: classworlds
+     * consults imports BEFORE the (dead) self and the parent, which makes
+     * {@code realm.loadClass(pluginClassName)} work again at runtime — required by sisu's
      * {@code ComponentDescriptor.getRoleClass()} (always by-name, unpinnable), requirement-role
-     * deferral, and any lazy {@code Class.forName} inside plugin code.
+     * deferral, and any lazy {@code Class.forName} inside plugin code — and makes
+     * {@code realm.getResource*} work for mojos that read resources from their own jar (e.g.
+     * spring-boot repackage loading META-INF/loader/spring-boot-loader.jar): the frozen realm
+     * cannot open its jars at runtime, so the bytes are baked and served from in-memory URLs.
      */
     static final class BakedClassLoader extends ClassLoader {
         private final Map<String, Class<?>> classes;
 
-        BakedClassLoader(Map<String, Class<?>> classes) {
+        /** Non-class jar entries, multi-valued per path in realm classpath order. */
+        private final Map<String, List<byte[]>> resources;
+
+        BakedClassLoader(Map<String, Class<?>> classes, Map<String, List<byte[]>> resources) {
             super(null);
             this.classes = classes;
+            this.resources = resources;
         }
 
         @Override
@@ -118,6 +161,48 @@ public final class PrebuiltPluginRealms {
                 throw new ClassNotFoundException(name);
             }
             return c;
+        }
+
+        @Override
+        protected URL findResource(String name) {
+            List<byte[]> data = resources.get(name);
+            return data == null || data.isEmpty() ? null : toUrl(name, data.get(0));
+        }
+
+        @Override
+        protected Enumeration<URL> findResources(String name) {
+            List<URL> urls = new ArrayList<>();
+            for (byte[] bytes : resources.getOrDefault(name, List.of())) {
+                urls.add(toUrl(name, bytes));
+            }
+            return Collections.enumeration(urls);
+        }
+
+        private static URL toUrl(String name, byte[] bytes) {
+            try {
+                // handler passed directly to the URL — no protocol registry involved
+                return new URL("nmvn-baked", null, -1, "/" + name, new URLStreamHandler() {
+                    @Override
+                    protected URLConnection openConnection(URL url) {
+                        return new URLConnection(url) {
+                            @Override
+                            public void connect() {}
+
+                            @Override
+                            public InputStream getInputStream() {
+                                return new ByteArrayInputStream(bytes);
+                            }
+
+                            @Override
+                            public int getContentLength() {
+                                return bytes.length;
+                            }
+                        };
+                    }
+                });
+            } catch (MalformedURLException e) {
+                throw new IllegalStateException(e);
+            }
         }
     }
 
@@ -213,18 +298,31 @@ public final class PrebuiltPluginRealms {
             // seam (and with it the Sisu publication) would never be consulted.
 
             // Step 3: force-load EVERY class of every realm jar (the frozen realm cannot load at
-            // runtime), bake plugin-internal components from the sisu indexes, and install the
-            // import shim so by-name resolution of baked classes works again at runtime.
+            // runtime), bake plugin-internal components (components.xml) plus the sisu-indexed
+            // class list plus the jar resources, and install the import shim so by-name
+            // resolution of baked classes and resources works again at runtime.
             Map<String, Class<?>> classes = loadAllClasses(realm, jars);
             List<ComponentDescriptor<?>> components = bakeComponents(realm, classes, jars);
-            BakedClassLoader baked = new BakedClassLoader(classes);
-            Set<String> packages = new LinkedHashSet<>();
+            List<Class<?>> indexedClasses = bakeIndexedClasses(classes, jars);
+            List<Artifact> artifacts = bakeArtifacts(jars);
+            Map<String, List<byte[]>> resources = loadAllResources(jars);
+            BakedClassLoader baked = new BakedClassLoader(classes, resources);
+            Set<String> imports = new LinkedHashSet<>();
             for (String className : classes.keySet()) {
                 int dot = className.lastIndexOf('.');
-                packages.add(dot > 0 ? className.substring(0, dot) : className);
+                imports.add(dot > 0 ? className.substring(0, dot) : className);
             }
-            for (String pkg : packages) {
-                realm.importFrom(baked, pkg);
+            for (String resourceName : resources.keySet()) {
+                // Entry.matches converts a dotted import to a path for resource lookups, so a
+                // directory containing dots (META-INF/maven/<groupId>/...) would be mangled —
+                // import those (and root-level files) by their exact resource name, which
+                // Entry.matches checks first, before any conversion.
+                int slash = resourceName.lastIndexOf('/');
+                String dir = slash > 0 ? resourceName.substring(0, slash) : null;
+                imports.add(dir == null || dir.indexOf('.') >= 0 ? resourceName : dir);
+            }
+            for (String importSpec : imports) {
+                realm.importFrom(baked, importSpec);
             }
 
             // Step 4: NOW swap the parent to the baked core realm. This is an ordinary heap
@@ -233,7 +331,9 @@ public final class PrebuiltPluginRealms {
             // visibility set (RealmManager.computeVisibleNames walks getParentRealm()).
             realm.setParentRealm(core);
 
-            BY_KEY.put(groupId + ":" + artifactId, new Prebuilt(descriptor, realm, classes, components));
+            BY_KEY.put(
+                    groupId + ":" + artifactId,
+                    new Prebuilt(descriptor, realm, classes, components, indexedClasses, artifacts));
             report.append(groupId)
                     .append(':')
                     .append(artifactId)
@@ -243,6 +343,8 @@ public final class PrebuiltPluginRealms {
                     .append(classes.size())
                     .append(",components=")
                     .append(components.size())
+                    .append(",indexed=")
+                    .append(indexedClasses.size())
                     .append(") ");
         }
         return report.toString();
@@ -267,7 +369,10 @@ public final class PrebuiltPluginRealms {
                     String className =
                             name.substring(0, name.length() - ".class".length()).replace('/', '.');
                     try {
-                        classes.put(className, realm.loadClass(className));
+                        Class<?> c = realm.loadClass(className);
+                        if (!isHostedOnly(c)) {
+                            classes.put(className, c);
+                        }
                     } catch (Throwable t) {
                         // tolerated: classes referencing optional/absent dependencies
                     }
@@ -278,15 +383,99 @@ public final class PrebuiltPluginRealms {
     }
 
     /**
-     * Parses each jar's {@code META-INF/sisu/javax.inject.Named} index into plexus
-     * {@link ComponentDescriptor}s with PINNED implementation classes. Each component is bound
-     * under itself and every non-JDK interface in its hierarchy (approximating sisu's wildcard
-     * binding); the hint follows sisu's convention: explicit {@code @Named} value, else "default"
-     * for Default-prefixed impls, else the FQCN.
+     * Bakes every non-class entry of every realm jar (the frozen realm cannot open its jars at
+     * runtime), multi-valued per path in classpath order so {@code getResources} enumerations
+     * behave like on a live realm.
+     */
+    private static Map<String, List<byte[]>> loadAllResources(String jars) throws Exception {
+        Map<String, List<byte[]>> resources = new LinkedHashMap<>();
+        for (String jar : jars.split(File.pathSeparator)) {
+            if (jar.isBlank()) {
+                continue;
+            }
+            try (JarFile jarFile = new JarFile(new File(jar))) {
+                Enumeration<JarEntry> entries = jarFile.entries();
+                while (entries.hasMoreElements()) {
+                    JarEntry entry = entries.nextElement();
+                    String name = entry.getName();
+                    if (entry.isDirectory() || name.endsWith(".class")) {
+                        continue;
+                    }
+                    try (InputStream in = jarFile.getInputStream(entry)) {
+                        resources
+                                .computeIfAbsent(name, k -> new ArrayList<>())
+                                .add(in.readAllBytes());
+                    }
+                }
+            }
+        }
+        return resources;
+    }
+
+    /**
+     * Some plugin classpaths carry classes meant for the GraalVM image BUILDER, not for any
+     * runtime — e.g. spring-aot's {@code PreComputeFieldFeature implements
+     * org.graalvm.nativeimage.hosted.Feature}. Hosted-only interfaces are rejected by the image
+     * heap scanner, so such Class objects must not enter the baked class map. Detect them by
+     * walking the supertype hierarchy for anything under {@code org.graalvm.nativeimage.}; an
+     * uninspectable hierarchy is treated as hosted-only (not baked), matching the tolerated-failure
+     * policy of {@link #loadAllClasses}.
+     */
+    private static boolean isHostedOnly(Class<?> c) {
+        try {
+            Set<Class<?>> pending = new LinkedHashSet<>();
+            for (Class<?> t = c; t != null; t = t.getSuperclass()) {
+                Collections.addAll(pending, t.getInterfaces());
+            }
+            Set<Class<?>> seen = new LinkedHashSet<>();
+            while (!pending.isEmpty()) {
+                Class<?> iface = pending.iterator().next();
+                pending.remove(iface);
+                if (!seen.add(iface)) {
+                    continue;
+                }
+                if (iface.getName().startsWith("org.graalvm.nativeimage.")) {
+                    return true;
+                }
+                Collections.addAll(pending, iface.getInterfaces());
+            }
+            return false;
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    /**
+     * Parses each jar's legacy {@code META-INF/plexus/components.xml} (still shipped by e.g.
+     * org.sonatype plexus-build-api, injected by maven-filtering) into plexus
+     * {@link ComponentDescriptor}s with PINNED implementation classes, bound under their declared
+     * role/hint. Publication bypasses {@code discoverComponents}, so anything not baked here is
+     * invisible at runtime. Sisu-indexed components are handled separately — see
+     * {@link Prebuilt#indexedClasses}.
      */
     private static List<ComponentDescriptor<?>> bakeComponents(
             ClassRealm realm, Map<String, Class<?>> classes, String jars) throws Exception {
         List<ComponentDescriptor<?>> components = new ArrayList<>();
+        Set<String> bound = new LinkedHashSet<>();
+        for (String jar : jars.split(File.pathSeparator)) {
+            if (jar.isBlank()) {
+                continue;
+            }
+            try (JarFile jarFile = new JarFile(new File(jar))) {
+                JarEntry plexusXml = jarFile.getJarEntry("META-INF/plexus/components.xml");
+                if (plexusXml != null) {
+                    try (InputStream in = jarFile.getInputStream(plexusXml)) {
+                        bakeComponentsXml(components, bound, realm, classes, in);
+                    }
+                }
+            }
+        }
+        return components;
+    }
+
+    /** The pinned classes of each jar's {@code META-INF/sisu/javax.inject.Named} index, in index order. */
+    private static List<Class<?>> bakeIndexedClasses(Map<String, Class<?>> classes, String jars) throws Exception {
+        List<Class<?>> indexed = new ArrayList<>();
         for (String jar : jars.split(File.pathSeparator)) {
             if (jar.isBlank()) {
                 continue;
@@ -305,52 +494,176 @@ public final class PrebuiltPluginRealms {
                             continue;
                         }
                         Class<?> impl = classes.get(className);
-                        if (impl == null) {
-                            continue; // failed to load at build time; nothing we can do
-                        }
-                        String hint = hintOf(impl);
-                        for (Class<?> role : roleClosure(impl)) {
-                            ComponentDescriptor<Object> cd = new ComponentDescriptor<>();
-                            cd.setRole(role.getName());
-                            cd.setRoleHint(hint);
-                            cd.setImplementation(impl.getName());
-                            // ORDER: setRealm first — it nulls the cached implementation class.
-                            cd.setRealm(realm);
-                            cd.setImplementationClass(impl);
-                            components.add(cd);
+                        if (impl != null) { // absent: failed to load at build time; nothing we can do
+                            indexed.add(impl);
                         }
                     }
                 }
             }
         }
-        return components;
+        return indexed;
     }
 
-    /** Sisu-style binding hint: explicit @Named value, else "default" for Default-prefixed impls, else FQCN. */
-    private static String hintOf(Class<?> impl) {
-        javax.inject.Named named = impl.getAnnotation(javax.inject.Named.class);
-        if (named != null && !named.value().isEmpty()) {
-            return named.value();
-        }
-        return impl.getSimpleName().startsWith("Default") ? "default" : impl.getName();
-    }
-
-    /** The impl itself plus every non-JDK interface in its type hierarchy. */
-    private static Set<Class<?>> roleClosure(Class<?> impl) {
-        Set<Class<?>> roles = new LinkedHashSet<>();
-        roles.add(impl);
-        for (Class<?> t = impl; t != null && t != Object.class; t = t.getSuperclass()) {
-            collectInterfaces(t, roles);
-        }
-        roles.removeIf(r -> r.getName().startsWith("java.") || r.getName().startsWith("javax."));
-        return roles;
-    }
-
-    private static void collectInterfaces(Class<?> type, Set<Class<?>> into) {
-        for (Class<?> iface : type.getInterfaces()) {
-            if (into.add(iface)) {
-                collectInterfaces(iface, into);
+    /** Bakes the components of one legacy {@code META-INF/plexus/components.xml}. */
+    private static void bakeComponentsXml(
+            List<ComponentDescriptor<?>> components,
+            Set<String> bound,
+            ClassRealm realm,
+            Map<String, Class<?>> classes,
+            InputStream in)
+            throws Exception {
+        javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+        dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        org.w3c.dom.Document doc = dbf.newDocumentBuilder().parse(in);
+        org.w3c.dom.NodeList nodes = doc.getElementsByTagName("component");
+        for (int i = 0; i < nodes.getLength(); i++) {
+            org.w3c.dom.Element component = (org.w3c.dom.Element) nodes.item(i);
+            String role = childText(component, "role");
+            String implementation = childText(component, "implementation");
+            if (role == null || implementation == null) {
+                continue;
             }
+            Class<?> impl = classes.get(implementation);
+            if (impl == null) {
+                continue; // failed to load at build time; nothing we can do
+            }
+            String hint = childText(component, "role-hint");
+            addComponent(components, bound, realm, role, hint == null ? "default" : hint, impl, component);
+        }
+    }
+
+    /** First direct child element's trimmed text, or null. */
+    private static String childText(org.w3c.dom.Element parent, String name) {
+        for (org.w3c.dom.Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (n instanceof org.w3c.dom.Element e && name.equals(e.getTagName())) {
+                String text = e.getTextContent();
+                return text == null || text.isBlank() ? null : text.trim();
+            }
+        }
+        return null;
+    }
+
+    private static void addComponent(
+            List<ComponentDescriptor<?>> components,
+            Set<String> bound,
+            ClassRealm realm,
+            String role,
+            String hint,
+            Class<?> impl,
+            org.w3c.dom.Element componentXml) {
+        if (!bound.add(role + "/" + hint + "/" + impl.getName())) {
+            return; // already baked (e.g. declared in both formats)
+        }
+        ComponentDescriptor<Object> cd = new ComponentDescriptor<>();
+        cd.setRole(role);
+        cd.setRoleHint(hint);
+        cd.setImplementation(impl.getName());
+        if (componentXml != null) {
+            String strategy = childText(componentXml, "instantiation-strategy");
+            if (strategy != null) {
+                cd.setInstantiationStrategy(strategy);
+            }
+            org.w3c.dom.NodeList requirements = componentXml.getElementsByTagName("requirement");
+            for (int i = 0; i < requirements.getLength(); i++) {
+                org.w3c.dom.Element requirement = (org.w3c.dom.Element) requirements.item(i);
+                org.codehaus.plexus.component.repository.ComponentRequirement req =
+                        new org.codehaus.plexus.component.repository.ComponentRequirement();
+                req.setRole(childText(requirement, "role"));
+                String reqHint = childText(requirement, "role-hint");
+                if (reqHint != null) {
+                    req.setRoleHint(reqHint);
+                }
+                req.setFieldName(childText(requirement, "field-name"));
+                cd.addRequirement(req);
+            }
+        }
+        // ORDER: setRealm first — it nulls the cached implementation class.
+        cd.setRealm(realm);
+        cd.setImplementationClass(impl);
+        components.add(cd);
+    }
+
+    /** The realm jars as resolved plugin artifacts — see {@link Prebuilt#artifacts}. */
+    private static List<Artifact> bakeArtifacts(String jars) {
+        List<Artifact> artifacts = new ArrayList<>();
+        for (String jar : jars.split(File.pathSeparator)) {
+            if (jar.isBlank()) {
+                continue;
+            }
+            Artifact artifact = toArtifact(new File(jar));
+            if (artifact != null) {
+                artifacts.add(artifact);
+            }
+        }
+        return artifacts;
+    }
+
+    private static Artifact toArtifact(File jar) {
+        String[] gav = gavOf(jar);
+        if (gav == null) {
+            return null;
+        }
+        String base = gav[1] + "-" + gav[2];
+        String fileName = jar.getName().replaceFirst("\\.jar$", "");
+        String classifier = fileName.startsWith(base + "-") ? fileName.substring(base.length() + 1) : null;
+        DefaultArtifact artifact = new DefaultArtifact(
+                gav[0], gav[1], gav[2], Artifact.SCOPE_RUNTIME, "jar", classifier, new DefaultArtifactHandler("jar"));
+        artifact.setFile(jar);
+        artifact.setResolved(true);
+        return artifact;
+    }
+
+    /**
+     * groupId/artifactId/version of a jar: local-repo path layout first (bake-time classpaths are
+     * always repo-resolved, and shaded jars like surefire-shared-utils carry only the SHADED
+     * dependency's pom.properties), embedded pom.properties as fallback.
+     */
+    private static String[] gavOf(File jar) {
+        // local-repo layout: .../repository/<group dirs>/<artifactId>/<version>/<file>.jar
+        File versionDir = jar.getParentFile();
+        File artifactDir = versionDir == null ? null : versionDir.getParentFile();
+        if (artifactDir != null) {
+            StringBuilder group = new StringBuilder();
+            for (File dir = artifactDir.getParentFile(); dir != null; dir = dir.getParentFile()) {
+                if (dir.getName().equals("repository")) {
+                    if (!group.isEmpty()) {
+                        return new String[] {group.toString(), artifactDir.getName(), versionDir.getName()};
+                    }
+                    break;
+                }
+                group.insert(0, group.isEmpty() ? dir.getName() : dir.getName() + ".");
+            }
+        }
+        try (JarFile jarFile = new JarFile(jar)) {
+            String[] first = null;
+            Enumeration<JarEntry> entries = jarFile.entries();
+            while (entries.hasMoreElements()) {
+                JarEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (!name.startsWith("META-INF/maven/") || !name.endsWith("/pom.properties")) {
+                    continue;
+                }
+                Properties p = new Properties();
+                try (InputStream in = jarFile.getInputStream(entry)) {
+                    p.load(in);
+                }
+                String g = p.getProperty("groupId");
+                String a = p.getProperty("artifactId");
+                String v = p.getProperty("version");
+                if (g == null || a == null || v == null) {
+                    continue;
+                }
+                // shaded jars can carry several pom.properties; prefer the one matching the file name
+                if (jar.getName().startsWith(a + "-")) {
+                    return new String[] {g, a, v};
+                }
+                if (first == null) {
+                    first = new String[] {g, a, v};
+                }
+            }
+            return first;
+        } catch (Exception e) {
+            return null;
         }
     }
 

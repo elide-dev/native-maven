@@ -11,7 +11,10 @@
 # This is a single-plugin proof of concept. Run it; do not expect it to be tuned.
 #
 # Usage:
-#   ./build-nmvn-prebuilt.sh
+#   ./build-nmvn-prebuilt.sh [groupId:artifactId:version ...]
+#
+# Plugins to bake can be passed as arguments (one g:a:v each); without arguments the default
+# list below is used. See build-nmvn-for-pom.sh for deriving the list from a project's pom.xml.
 #
 set -euo pipefail
 
@@ -26,6 +29,9 @@ PLUGINS=(
   "org.apache.maven.plugins:maven-clean-plugin:3.5.0"
   "org.apache.maven.plugins:maven-compiler-plugin:3.13.0"
 )
+if [ "$#" -gt 0 ]; then
+  PLUGINS=("$@")
+fi
 
 # ---------------------------------------------------------------------------------------------------
 # 0) Ensure the Maven distribution is unpacked (provides boot/ + lib/ for the image classpath).
@@ -47,9 +53,18 @@ fi
 #    keeps the realms honest (no cross-plugin dependency pollution). 'runtime' scope excludes
 #    'provided' deps (maven-plugin-api, maven core): at runtime those come from the realm's parent,
 #    the baked plexus.core.
+#
+#    Additionally, jars that maven-core EXPORTS to plugin realms are dropped, exactly like
+#    DefaultClassRealmManager.isProvidedArtifact does for dynamic realms. Maven-2/3-era plugins
+#    declare maven core artifacts as compile-scope deps; letting them into a baked realm bakes
+#    foreign core components (e.g. an old maven-core components.xml whose components require
+#    LifecycleStarter), which breaks injector creation at publication time.
 # ---------------------------------------------------------------------------------------------------
 WORK="$SCRIPT_DIR/.prebuilt-work"
 mkdir -p "$WORK"
+
+EXPORTED_ARTIFACTS=$(unzip -p "$MAVEN_HOME"/lib/maven-core-*.jar META-INF/maven/extension.xml \
+  | sed -n 's/.*<exportedArtifact>\(.*\)<\/exportedArtifact>.*/\1/p')
 
 PREBUILT_SPEC=""
 for GAV in "${PLUGINS[@]}"; do
@@ -79,7 +94,29 @@ POM
       -Dmdep.outputFile="$CP_FILE" \
       -DincludeScope=runtime
 
-  PLUGIN_JARS="$(cat "$CP_FILE")"
+  PLUGIN_JARS=$(NMVN_EXPORTED="$EXPORTED_ARTIFACTS" python3 - "$CP_FILE" <<'PY'
+import os
+import sys
+
+exported = set(os.environ["NMVN_EXPORTED"].split())
+kept = []
+for jar in open(sys.argv[1]).read().strip().split(os.pathsep):
+    if not jar:
+        continue
+    # local-repo layout: .../repository/<group dirs>/<artifactId>/<version>/<file>.jar
+    parts = jar.split(os.sep)
+    ga = None
+    if "repository" in parts:
+        i = len(parts) - 1 - parts[::-1].index("repository")
+        if len(parts) - i >= 4:
+            ga = ".".join(parts[i + 1 : -3]) + ":" + parts[-3]
+    if ga in exported:
+        print(f"    excluded (provided by core): {ga}", file=sys.stderr)
+        continue
+    kept.append(jar)
+print(os.pathsep.join(kept))
+PY
+)
   if [ -z "$PLUGIN_JARS" ]; then
     echo "Error: could not resolve runtime classpath for $GAV"
     exit 1
@@ -218,7 +255,7 @@ native-image \
   --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
   --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
   --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
-  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,org.apache.maven.plugin.descriptor,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
+  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
   --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary,jdk.internal.jrtfs.SystemImage \
   --features=nmvn.PrebuiltReflectionFeature \
   nmvn.NmvnLauncher \

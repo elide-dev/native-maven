@@ -29,6 +29,8 @@ import org.eclipse.aether.graph.DependencyFilter;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.sisu.Priority;
 import org.eclipse.sisu.plexus.ComponentDescriptorBeanModule;
+import org.eclipse.sisu.plexus.PlexusBeanModule;
+import org.eclipse.sisu.space.QualifiedTypeBinder;
 import org.eclipse.sisu.space.URLClassSpace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -127,7 +129,8 @@ public class PrebuiltPluginRealmCache extends DefaultPluginRealmCache {
 
     private CacheRecord serve(PrebuiltKey key) {
         publishOnce(key.prebuilt, key.plugin);
-        return new CacheRecord(key.prebuilt.realm, new ArrayList<>());
+        // Baked artifacts back pluginDescriptor.getArtifacts() — surefire's booter lookup needs them.
+        return new CacheRecord(key.prebuilt.realm, new ArrayList<>(key.prebuilt.artifacts));
     }
 
     private void publishOnce(PrebuiltPluginRealms.Prebuilt prebuilt, Plugin plugin) {
@@ -151,19 +154,31 @@ public class PrebuiltPluginRealmCache extends DefaultPluginRealmCache {
             ClassLoader prevTccl = Thread.currentThread().getContextClassLoader();
             try {
                 Thread.currentThread().setContextClassLoader(realm);
+                URLClassSpace space = new URLClassSpace(realm);
+                // Sisu-indexed classes go through QualifiedTypeBinder — the binder stock index
+                // scanning uses — with the pinned Class objects standing in for the scan; the
+                // space's toString (== realm toString) keeps realm-visibility filtering intact.
+                PlexusBeanModule indexedModule = binder -> {
+                    QualifiedTypeBinder qualifiedBinder = new QualifiedTypeBinder(binder);
+                    for (Class<?> type : prebuilt.indexedClasses) {
+                        qualifiedBinder.hear(type, space.toString());
+                    }
+                    return null;
+                };
                 ((DefaultPlexusContainer) container)
                         .addPlexusInjector(
-                                List.of(new ComponentDescriptorBeanModule(new URLClassSpace(realm), descriptors)),
+                                List.of(new ComponentDescriptorBeanModule(space, descriptors), indexedModule),
                                 new SessionScopeModule(container.lookup(SessionScope.class)),
                                 new MojoExecutionScopeModule(container.lookup(MojoExecutionScope.class)),
                                 new PrebuiltPluginConfigurationModule(plugin.getDelegate()),
                                 new SisuDiBridgeModule(true));
                 prebuilt.published = true;
                 logger.info(
-                        "nmvn: published PREBUILT plugin {} ({} descriptors, {} baked components) from {}",
+                        "nmvn: published PREBUILT plugin {} ({} descriptors, {} baked components, {} indexed) from {}",
                         plugin.getId(),
                         descriptors.size(),
                         prebuilt.components.size(),
+                        prebuilt.indexedClasses.size(),
                         realm);
             } catch (ComponentLookupException e) {
                 throw new IllegalStateException("nmvn: failed to publish prebuilt plugin " + plugin.getId(), e);
