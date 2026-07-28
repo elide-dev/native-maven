@@ -23,9 +23,13 @@ SCRIPT_DIR=$(cd "$(dirname "$PRG")" && pwd)
 TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
 MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
 
-if [ ! -x "$SCRIPT_DIR/nmvn-native" ]; then
-  echo "Error: native binary not found at $SCRIPT_DIR/nmvn-native"
-  echo "Run: ./build-nmvn-prebuilt.sh"
+# Which native image to launch: NMVN_BINARY selects a specialized build
+# (e.g. NMVN_BINARY=nmvn-spring-4.1.0 from build-nmvn-for-spring.sh); default is nmvn-native.
+NMVN_BINARY="${NMVN_BINARY:-nmvn-native}"
+
+if [ ! -x "$SCRIPT_DIR/$NMVN_BINARY" ]; then
+  echo "Error: native binary not found at $SCRIPT_DIR/$NMVN_BINARY"
+  echo "Run: ./build-nmvn-prebuilt.sh (or a build-nmvn-for-*.sh variant)"
   exit 1
 fi
 
@@ -81,7 +85,7 @@ find_maven_basedir() {
 
 MAVEN_PROJECTBASEDIR=$(find_maven_basedir "$@")
 
-"$SCRIPT_DIR/nmvn-native" \
+"$SCRIPT_DIR/$NMVN_BINARY" \
   -Dclassworlds.conf="$MAVEN_HOME/bin/m2.conf" \
   -Dmaven.mainClass=org.apache.maven.cling.MavenCling \
   -Dlibrary.jline.path="$MAVEN_HOME/lib/jline-native" \
