@@ -26,5 +26,10 @@
 # nmvn (native-maven) build artifacts
 /.prebuilt-work/
 /prebuilt-feature/classes/
-/nmvn-native
+/prebuilt-feature/tool-classes/
+# every built image is nmvn-<something>: nmvn-native, nmvn-spring-4.1.0, ... (the nmvn
+# launcher script itself has no dash, so it stays tracked)
+/nmvn-*
 /lib*.dylib
+# GraalVM writes svm_err_b_*.md crash reports into the working directory
+/svm_err_*.md

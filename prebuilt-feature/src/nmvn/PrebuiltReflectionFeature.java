@@ -94,7 +94,36 @@ public final class PrebuiltReflectionFeature implements Feature {
         PrebuiltPluginRealms.all().forEach((key, prebuilt) -> {
             int failed = 0;
             for (Class<?> c : prebuilt.classes.values()) {
+                // Probe BEFORE registering: ReflectionDataBuilder parses each registered class's
+                // generic signatures asynchronously during analysis, and ancient bytecode with
+                // broken EnclosingMethod/Signature attributes (e.g. aether-util 1.7) makes that
+                // throw InternalError where SVM has no catch — failing the whole image build.
+                // The class stays in the baked realm (still loadable at runtime), it just gets
+                // no reflection metadata.
+                if (!probeGenericSignatures(c, key)) {
+                    failed++;
+                    continue;
+                }
                 try {
+                    // Register the FULL surface: class (queryable by name), constructors (Guice/sisu
+                    // instantiation), fields and methods.
+                    //
+                    // Methods deliberately included for EVERY baked class, not just the DI entry
+                    // points. Plexus configures mojo parameters through ComponentValueSetter, which
+                    // prefers a SETTER over direct field access, and it does so recursively for
+                    // nested <configuration> beans — objects that are not mojos, not sisu-indexed and
+                    // not declared in components.xml, so no reachable-from-the-descriptor rule finds
+                    // them. Narrowing this to the DI roots broke exactly that: spotless failed with
+                    // "Cannot reflectively invoke FormatterFactory.addLicenseHeader(LicenseHeader)"
+                    // while configuring <java><licenseHeader>.
+                    //
+                    // Registering a method makes it an image root, so SVM parses its body — which
+                    // USED to force build-time resolution of everything the body names and turn every
+                    // guarded optional-dependency branch (jansi, kotlin-reflect, ...) into a dropped
+                    // class. SelfFirstRealm removed that: baked classes are no longer forced to link
+                    // at build time, so such a reference now yields a runtime LinkageError exactly as
+                    // on HotSpot. Full registration is therefore affordable again, and the narrower
+                    // policy bought ~9% fewer registered methods at the cost of correctness.
                     RuntimeReflection.register(c);
                     RuntimeReflection.register(c.getDeclaredConstructors());
                     RuntimeReflection.register(c.getDeclaredMethods());
@@ -107,6 +136,70 @@ public final class PrebuiltReflectionFeature implements Feature {
                     + failed + " failed) for " + key);
         });
         System.out.println("nmvn feature: " + PrebuiltPluginRealms.STATUS);
+    }
+
+    /**
+     * Dry-runs every generic-signature query ReflectionDataBuilder performs on a registered class
+     * (enclosing method/class, generic supertypes, per-member generic types), recursing into type
+     * arguments and forcing wildcard/variable bound reification the same way SVM's type hashing
+     * does. Returns false — and logs — if any query throws (InternalError, LinkageError, ...).
+     */
+    private static boolean probeGenericSignatures(Class<?> c, Object realmKey) {
+        try {
+            c.getEnclosingMethod();
+            c.getEnclosingConstructor();
+            c.getEnclosingClass();
+            reifyTypes(new HashSet<>(), c.getTypeParameters());
+            reifyTypes(new HashSet<>(), c.getGenericSuperclass());
+            reifyTypes(new HashSet<>(), c.getGenericInterfaces());
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                reifyTypes(new HashSet<>(), m.getTypeParameters());
+                reifyTypes(new HashSet<>(), m.getGenericParameterTypes());
+                reifyTypes(new HashSet<>(), m.getGenericReturnType());
+                reifyTypes(new HashSet<>(), m.getGenericExceptionTypes());
+            }
+            for (java.lang.reflect.Constructor<?> k : c.getDeclaredConstructors()) {
+                reifyTypes(new HashSet<>(), k.getTypeParameters());
+                reifyTypes(new HashSet<>(), k.getGenericParameterTypes());
+                reifyTypes(new HashSet<>(), k.getGenericExceptionTypes());
+            }
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                reifyTypes(new HashSet<>(), f.getGenericType());
+            }
+            return true;
+        } catch (Throwable t) {
+            // Only InternalError (broken EnclosingMethod/Signature bytecode) is fatal to SVM's
+            // analysis — SanitizeRealmJars should have stripped it; this is belt-and-suspenders.
+            // LinkageError/TypeNotPresentException (absent optional deps) are tolerated by SVM,
+            // so those classes still get registered — matching live-realm behavior.
+            for (Throwable x = t; x != null; x = x.getCause()) {
+                if (x instanceof InternalError) {
+                    System.out.println("nmvn feature: SKIPPED " + c.getName() + " in " + realmKey
+                            + " (broken generic metadata survived sanitization: " + t + ")");
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static void reifyTypes(Set<java.lang.reflect.Type> seen, java.lang.reflect.Type... types) {
+        for (java.lang.reflect.Type type : types) {
+            if (type == null || !seen.add(type)) { // add() hashes: forces the same lazy reification SVM triggers
+                continue;
+            }
+            if (type instanceof java.lang.reflect.ParameterizedType p) {
+                reifyTypes(seen, p.getActualTypeArguments());
+                reifyTypes(seen, p.getRawType(), p.getOwnerType());
+            } else if (type instanceof java.lang.reflect.WildcardType w) {
+                reifyTypes(seen, w.getUpperBounds());
+                reifyTypes(seen, w.getLowerBounds());
+            } else if (type instanceof java.lang.reflect.GenericArrayType a) {
+                reifyTypes(seen, a.getGenericComponentType());
+            } else if (type instanceof java.lang.reflect.TypeVariable<?> v) {
+                reifyTypes(seen, v.getBounds());
+            }
+        }
     }
 
     /** Programmatic replacement for the old reachability-metadata.json (except the foreign section). */

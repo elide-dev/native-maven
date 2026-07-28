@@ -22,6 +22,50 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
 MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
 
+# ---------------------------------------------------------------------------------------------------
+# 0a) PIN THE TOOLCHAIN. This image needs DEVELOPMENT options — -H:+RuntimeClassLoading (Crema) and
+#     -H:+GraalJITCompileAtRuntime — that exist only in a GraalVM built from source. A stock release
+#     does not have them, and neither does a newer dev build where they were renamed, so inheriting
+#     whatever happens to be on PATH silently decides whether the build can work at all.
+#
+#     Pinning here buys two things: the produced image no longer depends on which shell launched the
+#     build (it must not — a per-pom build service has to be reproducible), and a wrong toolchain
+#     fails IMMEDIATELY with an explanation instead of surfacing as "Unrecognized option
+#     '-H:+GraalJITCompileAtRuntime'" after the plugin-resolution and link-probe phases have already
+#     run. JAVA_HOME/PATH are exported so native-image, javac and java (SanitizeRealmJars needs
+#     java.lang.classfile plus JVMCI) all come from the same JDK as the image builder.
+#
+#     Override with: NMVN_GRAALVM_HOME=/path/to/graalvm/Contents/Home
+# ---------------------------------------------------------------------------------------------------
+NMVN_GRAALVM_HOME="${NMVN_GRAALVM_HOME:-$HOME/Developer/graal/sdk/mxbuild/darwin-aarch64/GRAALVM_COMMUNITY_JAVA25/graalvm-community-25.3.4-dev+7.1/Contents/Home}"
+
+if [ ! -x "$NMVN_GRAALVM_HOME/bin/native-image" ]; then
+  echo "Error: no native-image at $NMVN_GRAALVM_HOME/bin/native-image"
+  echo "       Set NMVN_GRAALVM_HOME to a GraalVM built from source, e.g."
+  echo "       ~/Developer/graal/sdk/mxbuild/<platform>/GRAALVM_COMMUNITY_JAVA25/graalvm-community-*/Contents/Home"
+  exit 1
+fi
+
+export JAVA_HOME="$NMVN_GRAALVM_HOME"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+EXPERT_OPTIONS="$(native-image --expert-options-all 2>&1 || true)"
+# Matched with a shell 'case', NOT 'printf ... | grep -q': grep -q exits on the first match and closes
+# the pipe, printf then dies of SIGPIPE, and under 'set -o pipefail' the pipeline reports THAT failure
+# — so a successful match would look like a missing option and every toolchain would be rejected.
+for required in RuntimeClassLoading GraalJITCompileAtRuntime; do
+  if case "$EXPERT_OPTIONS" in *"$required"*) false ;; *) true ;; esac; then
+    echo "Error: this toolchain does not support -H:±$required, which nmvn's baked realms depend on:"
+    echo "         $(native-image --version 2>&1 | head -1)"
+    echo "         NMVN_GRAALVM_HOME=$NMVN_GRAALVM_HOME"
+    echo "       Point NMVN_GRAALVM_HOME at a GraalVM with Crema/runtime-class-loading support."
+    exit 1
+  fi
+done
+
+echo ">>> Toolchain: $(native-image --version 2>&1 | head -1)"
+echo ">>>            $JAVA_HOME"
+
 # Baked ("supported") plugins. Versions MUST match what builds will request (explicit pins or the
 # default lifecycle bindings of this Maven snapshot) — prebuiltFor falls back to dynamic resolution
 # on any version skew.
@@ -145,6 +189,13 @@ done
 # ---------------------------------------------------------------------------------------------------
 FEATURE_OUT="$SCRIPT_DIR/prebuilt-feature/classes"
 rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
+# Build-time-ONLY tools, compiled OUTSIDE $FEATURE_OUT so they can never reach the sidecar jar and
+# with it the image classpath. SanitizeRealmJars calls JVMCI on purpose; -H:Preserve=package=nmvn.*
+# would make those methods reachable as image roots, the static jdk.vm.ci.runtime.JVMCI.runtime
+# field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
+# the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
+TOOLS_OUT="$SCRIPT_DIR/prebuilt-feature/tool-classes"
+rm -rf "$TOOLS_OUT" && mkdir -p "$TOOLS_OUT"
 # Runtime classes at --release 17 so the SAME jar also works on plain JVM Maven (running on 17+);
 # builder/image-only classes (Feature needs the org.graalvm.nativeimage module) compile separately.
 javac --release 17 -cp "$CLASSPATH" -d "$FEATURE_OUT" \
@@ -155,12 +206,37 @@ javac --release 17 -cp "$CLASSPATH" -d "$FEATURE_OUT" \
 javac --add-modules org.graalvm.nativeimage -cp "$CLASSPATH:$FEATURE_OUT" -d "$FEATURE_OUT" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionFeature.java" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/NmvnLauncher.java"
+# No --release here: this tool uses java.lang.classfile (JDK 24+) and only ever runs on the
+# builder JDK, so it has no 17-compatibility obligation like the runtime classes above.
+javac -cp "$CLASSPATH:$FEATURE_OUT" -d "$TOOLS_OUT" \
+  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/SanitizeRealmJars.java"
 # Ship as a REAL jar in lib/ (with the sisu index declaring the @Priority cache overrides): lib
 # jars are what the image classpath glob, IncludeResources embedding, Preserve, and the container's
 # index scanning all handle canonically — and the same jar makes the sidecar work on JVM Maven.
 cp -R "$SCRIPT_DIR/prebuilt-feature/resources/." "$FEATURE_OUT/"
 (cd "$FEATURE_OUT" && jar cf "$MAVEN_HOME/lib/nmvn-sidecar.jar" nmvn META-INF)
 CLASSPATH="$CLASSPATH:$MAVEN_HOME/lib/nmvn-sidecar.jar"
+
+# ---------------------------------------------------------------------------------------------------
+# 3) Sanitize realm jars: strip EnclosingMethod/Signature attributes whose reflective parsing
+#    throws InternalError (ancient/odd bytecode, e.g. gson anonymous classes). SVM parses generic
+#    signatures of every heap-reachable class and treats InternalError as fatal; the queries
+#    already throw identically on JVM Maven, so stripping is behavior-preserving. Jars are
+#    rewritten into $WORK/sanitized (originals in ~/.m2 untouched) and the spec repointed.
+# ---------------------------------------------------------------------------------------------------
+echo "$PREBUILT_SPEC" > "$WORK/spec.txt"
+echo ">>> Sanitizing realm jars + link probe ..."
+# JVMCI flags: the tool runs the SAME ResolvedJavaType.link() SVM runs on registered classes,
+# against an exact replica of each baked realm; failures land in unlinkable.txt and are dropped
+# from the baked maps (see PrebuiltPluginRealms.loadAllClasses). Runs in this throwaway JVM
+# because JVMCI touched from image-baked code leaks the JVMCIRuntime singleton into the heap.
+PREBUILT_SPEC=$(java \
+  -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
+  --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
+  --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
+  -cp "$CLASSPATH:$TOOLS_OUT" \
+  nmvn.SanitizeRealmJars "$WORK/spec.txt" "$WORK/sanitized" "$WORK/unlinkable.txt")
+echo "$PREBUILT_SPEC" > "$WORK/spec.txt"
 
 # ---------------------------------------------------------------------------------------------------
 # 4) Build the image.
@@ -210,6 +286,7 @@ echo ">>> Building native image ..."
 native-image \
   -classpath "$CLASSPATH" \
   -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \
+  -Dnmvn.prebuilt.unlinkable="$WORK/unlinkable.txt" \
   -Dguice_bytecode_gen_option=DISABLED \
   -march=native \
   --no-fallback \
@@ -255,7 +332,7 @@ native-image \
   --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
   --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
   --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
-  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
+  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,nmvn.PrebuiltPluginRealms$SelfFirstRealm,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
   --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary,jdk.internal.jrtfs.SystemImage \
   --features=nmvn.PrebuiltReflectionFeature \
   nmvn.NmvnLauncher \

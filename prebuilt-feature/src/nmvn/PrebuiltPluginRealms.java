@@ -2,6 +2,7 @@ package nmvn;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -49,15 +51,19 @@ import org.codehaus.plexus.component.repository.ComponentDescriptor;
  * and the ONLY runtime fixup left in the whole hierarchy is re-attaching {@code plexus.core}'s own
  * parent to the runtime system loader (done by {@link NmvnLauncher}).
  *
- * <p><b>Class identity (why plugins are LOADED through the hosted loader, then re-parented).</b>
- * Plugin classes link against shared API types ({@code Mojo}, {@code AbstractMojo}) during
- * build-time loading. Those must resolve to the image-classpath copies — the single canonical
- * classes that are AOT-compiled and that the runtime container uses. If the plugin realms' parent
- * were the baked core realm DURING loading, the core realm would have to carry the lib jars and
- * would then DEFINE DUPLICATE copies of core classes, breaking {@code instanceof} and Guice keys at
- * runtime. Hence the two-step dance in {@link #buildAll}: load and pin with the hosted loader as
- * parent, then {@code setParentRealm(core)} before the snapshot. The baked core realm itself
- * carries NO jar URLs.
+ * <p><b>Class identity (why plugins are LOADED self-first with the hosted loader as strategy
+ * parent, then re-parented).</b> Plugin classes link against shared API types ({@code Mojo},
+ * {@code AbstractMojo}) during build-time loading. Those must resolve to the image-classpath
+ * copies — the single canonical classes that are AOT-compiled and that the runtime container
+ * uses. If the plugin realms' parent were the baked core realm DURING loading, the core realm
+ * would have to carry the lib jars and would then DEFINE DUPLICATE copies of core classes,
+ * breaking {@code instanceof} and Guice keys at runtime. Hence the two-step dance in
+ * {@link #buildAll}: load and pin self-first with the hosted loader as the STRATEGY parent
+ * (reached only for classes absent from the realm jars — exactly the shared API types, which the
+ * build script strips from realm classpaths), then {@code setParentRealm(core)} before the
+ * snapshot. The hosted loader must NOT be the realm's URLClassLoader parent: that order is
+ * parent-first and mixes image-classpath and realm copies of doubly-present libraries (see the
+ * step-1 comment in buildAll). The baked core realm itself carries NO jar URLs.
  *
  * <p><b>Frozen realms cannot load by name at runtime</b> — not even under Crema with the jar
  * present on disk (verified 2026-07-02). Every plugin class is therefore force-loaded at build time
@@ -206,6 +212,110 @@ public final class PrebuiltPluginRealms {
         }
     }
 
+    /**
+     * Build-time realm that is SELF-FIRST for lookup while having the image class loader as its real
+     * JDK parent ({@code getParent()}).
+     *
+     * <p><b>Why the JDK parent matters.</b> SVM decides link-at-build-time per class in
+     * {@code LinkAtBuildTimeSupport.isIncluded}: a class whose loader is not "a native image class
+     * loader" is forced to link at build time with NO opt-out, and
+     * {@code ClassLoaderSupport.isNativeImageClassLoader} answers that by walking the
+     * {@code getParent()} chain for the image loader. A realm created with a {@code null} base loader
+     * therefore has {@code getParent() == null}, the walk finds nothing, and every class it loads
+     * must resolve its ENTIRE reference closure at build time — which is what turns each absent
+     * optional dependency (jansi, kotlin-reflect, ...) into a cascade of dropped classes. Giving the
+     * realm the image loader as its JDK parent puts its classes on the ordinary classpath footing,
+     * where an unresolved reference becomes a runtime LinkageError exactly as on HotSpot.
+     *
+     * <p><b>Why lookup must still be self-first.</b> {@code ClassRealm.unsynchronizedLoadClass} calls
+     * {@code URLClassLoader.loadClass} (parent-FIRST) and only falls back to the self-first strategy
+     * on ClassNotFoundException. With a non-null parent that makes any library present on BOTH the
+     * image classpath and the realm jars (gson, guava, old plexus-utils, ...) resolve its outer
+     * classes from the image classpath and its inner classes from the realm jar — mixed versions in
+     * one realm. Overriding the single choke point restores import -> self -> parent order, i.e.
+     * exactly {@code SelfFirstStrategy} semantics, so shared API types ({@code Mojo}) still come from
+     * the image classpath while everything the realm ships wins over it.
+     */
+    static final class SelfFirstRealm extends ClassRealm {
+
+        SelfFirstRealm(ClassWorld world, String id, ClassLoader imageLoader) {
+            super(world, id, imageLoader);
+            // loadClassFromParent() consults the classworlds parent field, not getParent().
+            setParentClassLoader(imageLoader);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            Class<?> c = loadClassFromImport(name);
+            if (c == null) {
+                c = loadClassFromSelf(name); // takes the loading lock + findLoadedClass first
+            }
+            if (c == null) {
+                c = loadClassFromParent(name);
+            }
+            if (c == null) {
+                throw new ClassNotFoundException(name);
+            }
+            return c;
+        }
+    }
+
+    /**
+     * Creates a {@link SelfFirstRealm} and registers it in the world's realm map. {@code newRealm}
+     * would register it for us but hardcodes the {@code ClassRealm} type, so the map is populated
+     * directly to keep {@code world.getClassRealm}/{@code disposeRealm} working as before.
+     */
+    private static ClassRealm newSelfFirstRealm(ClassWorld world, String id, ClassLoader imageLoader)
+            throws Exception {
+        SelfFirstRealm realm = new SelfFirstRealm(world, id, imageLoader);
+        java.lang.reflect.Field realmsField = ClassWorld.class.getDeclaredField("realms");
+        realmsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, ClassRealm> realms = (Map<String, ClassRealm>) realmsField.get(world);
+        realms.put(id, realm);
+        return realm;
+    }
+
+    /**
+     * Re-enables the old whole-constant-pool closure requirement ({@code -Dnmvn.prebuilt.strictClosure=true}).
+     * Only needed if {@link SelfFirstRealm}'s escape from forced link-at-build-time ever stops holding.
+     */
+    private static final boolean STRICT_CLOSURE = Boolean.getBoolean("nmvn.prebuilt.strictClosure");
+
+    /**
+     * The {@code <exportedPackage>} entries of every {@code META-INF/maven/extension.xml} on the image
+     * classpath — i.e. maven-core's (plus any core extension's). These are the packages whose class
+     * identity is shared between the core realm and every plugin realm; see the import loop in
+     * {@link #buildAll}. Read as a classpath RESOURCE so the list stays in sync with whatever
+     * maven-core is being baked, with no build-script plumbing.
+     */
+    private static final List<String> CORE_EXPORTS = loadCoreExports();
+
+    private static List<String> loadCoreExports() {
+        List<String> exports = new ArrayList<>();
+        try {
+            javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            Enumeration<URL> urls =
+                    PrebuiltPluginRealms.class.getClassLoader().getResources("META-INF/maven/extension.xml");
+            while (urls.hasMoreElements()) {
+                try (InputStream in = urls.nextElement().openStream()) {
+                    org.w3c.dom.NodeList nodes =
+                            dbf.newDocumentBuilder().parse(in).getElementsByTagName("exportedPackage");
+                    for (int i = 0; i < nodes.getLength(); i++) {
+                        String text = nodes.item(i).getTextContent();
+                        if (text != null && !text.isBlank()) {
+                            exports.add(text.trim());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("nmvn prebuilt: cannot read core exported packages: " + e);
+        }
+        return exports;
+    }
+
     private static final String DESCRIPTOR_LOCATION = "META-INF/maven/plugin.xml";
 
     public static final String CORE_REALM_ID = "plexus.core";
@@ -252,6 +362,7 @@ public final class PrebuiltPluginRealms {
             return "no nmvn.prebuilt.plugins set — registry empty";
         }
 
+        Map<String, Set<String>> unlinkableAll = loadUnlinkable();
         StringBuilder report = new StringBuilder("prebuilt: ");
         for (String entry : spec.split(";")) {
             if (entry.isBlank()) {
@@ -271,25 +382,74 @@ public final class PrebuiltPluginRealms {
             String groupId = gav[0];
             String artifactId = gav[1];
 
-            // Step 1: create the realm with the HOSTED loader as parent, so that all class loading
-            // below links shared API types against the image-classpath (AOT) copies. See class doc.
-            ClassRealm realm = world.newRealm(
-                    "prebuilt>" + groupId + ":" + artifactId, PrebuiltPluginRealms.class.getClassLoader());
+            // Realms are keyed (and routed) by groupId:artifactId — a second VERSION of the same
+            // plugin cannot be baked alongside the first (realm id collision, BY_KEY collision).
+            // First entry wins; later versions resolve dynamically at runtime like any unbaked
+            // plugin (prebuilt routing falls back on version mismatch anyway).
+            if (BY_KEY.containsKey(groupId + ":" + artifactId)) {
+                System.out.println("nmvn prebuilt: skipping " + ga3 + " (another version of "
+                        + groupId + ":" + artifactId + " is already baked; it will resolve dynamically)");
+                continue;
+            }
+
+            // Step 1: create the realm. SelfFirstRealm gives it the image loader as its JDK parent
+            // (so SVM does NOT force link-at-build-time on its whole reference closure) while
+            // keeping import -> self -> parent lookup order (so doubly-present libraries are not
+            // mixed between the image classpath and the realm jars). See SelfFirstRealm's javadoc —
+            // both halves are load-bearing and the reasons are independent.
+            ClassRealm realm = newSelfFirstRealm(
+                    world, "prebuilt>" + groupId + ":" + artifactId, PrebuiltPluginRealms.class.getClassLoader());
             for (String jar : jars.split(File.pathSeparator)) {
                 if (!jar.isBlank()) {
                     realm.addURL(new File(jar).toURI().toURL());
                 }
             }
 
+            // Maven core EXPORTS packages to every plugin realm (DefaultClassRealmManager passes them
+            // as foreignImports), and classworlds consults imports before self — so a plugin realm
+            // that also ships plexus-utils still resolves org.codehaus.plexus.util.xml.Xpp3Dom to
+            // CORE's copy. Without these imports the realm defines its own Xpp3Dom and any object
+            // handed over from core fails to cast ("Xpp3Dom cannot be cast to Xpp3Dom"), which is
+            // exactly what maven-archiver's BuildHelper.getPluginParameter does when reading the
+            // compiler plugin's configuration. Stripping exportedArtifacts from the realm classpath
+            // (done by the build script) is NOT equivalent: the exported PACKAGES are a separate list
+            // and are what pins shared class identity.
+            for (String exported : CORE_EXPORTS) {
+                realm.importFrom(core, exported);
+            }
+
             PluginDescriptor descriptor = parseDescriptor(realm);
 
-            // Step 2: force-load each mojo class through THIS realm and pin the Class on the
-            // descriptor (a frozen realm cannot loadClass at runtime). ORDER: setRealm first —
-            // sisu's ComponentDescriptor.setRealm nulls the cached implementationClass.
+            // Step 2: force-load EVERY class of every realm jar (the frozen realm cannot load at
+            // runtime). Anything that would not survive SVM's build-time linking is dropped here.
+            Map<String, Class<?>> classes = loadAllClasses(realm, jars, unlinkableAll.getOrDefault(ga3, Set.of()));
+
+            // Step 2b: BAKE-OR-FALL-BACK GATE. Dropping a class is only acceptable for the
+            // optional-dependency integration points a Maven build never executes. If a MOJO's own
+            // implementation class did not survive, this plugin cannot be served from a frozen realm
+            // at all — so bake nothing for it and let the runtime resolve it dynamically (stock
+            // realms + Crema), which is a supported, isolated, verified path. A per-plugin fallback
+            // is always better than aborting the whole image build.
+            List<String> missingMojos = new ArrayList<>();
             for (MojoDescriptor mojo : descriptor.getMojos()) {
-                Class<?> impl = realm.loadClass(mojo.getImplementation());
+                if (!classes.containsKey(mojo.getImplementation())) {
+                    missingMojos.add(mojo.getGoal() + " -> " + mojo.getImplementation());
+                }
+            }
+            if (!missingMojos.isEmpty()) {
+                System.out.println("nmvn prebuilt: NOT baking " + ga3 + " — mojo implementations did not"
+                        + " survive build-time linking, will resolve dynamically at runtime: " + missingMojos);
+                world.disposeRealm(realm.getId());
+                report.append(groupId).append(':').append(artifactId).append("(SKIPPED->dynamic) ");
+                continue;
+            }
+
+            // Step 3: pin each mojo's Class on its descriptor (a frozen realm cannot loadClass at
+            // runtime). ORDER: setRealm first — sisu's ComponentDescriptor.setRealm nulls the
+            // cached implementationClass.
+            for (MojoDescriptor mojo : descriptor.getMojos()) {
                 mojo.setRealm(realm);
-                mojo.setImplementationClass(impl);
+                mojo.setImplementationClass(classes.get(mojo.getImplementation()));
                 mojo.setPluginDescriptor(descriptor);
             }
             // Deliberately NOT calling descriptor.setClassRealm(realm): stock semantics keep the
@@ -297,11 +457,9 @@ public final class PrebuiltPluginRealms {
             // getConfiguredMojo/getPluginRealm skip setupPluginRealm entirely, so the realm-cache
             // seam (and with it the Sisu publication) would never be consulted.
 
-            // Step 3: force-load EVERY class of every realm jar (the frozen realm cannot load at
-            // runtime), bake plugin-internal components (components.xml) plus the sisu-indexed
-            // class list plus the jar resources, and install the import shim so by-name
-            // resolution of baked classes and resources works again at runtime.
-            Map<String, Class<?>> classes = loadAllClasses(realm, jars);
+            // Step 4: bake plugin-internal components (components.xml) plus the sisu-indexed class
+            // list plus the jar resources, and install the import shim so by-name resolution of
+            // baked classes and resources works again at runtime.
             List<ComponentDescriptor<?>> components = bakeComponents(realm, classes, jars);
             List<Class<?>> indexedClasses = bakeIndexedClasses(classes, jars);
             List<Artifact> artifacts = bakeArtifacts(jars);
@@ -325,7 +483,7 @@ public final class PrebuiltPluginRealms {
                 realm.importFrom(baked, importSpec);
             }
 
-            // Step 4: NOW swap the parent to the baked core realm. This is an ordinary heap
+            // Step 5: NOW swap the parent to the baked core realm. This is an ordinary heap
             // reference, so it survives the snapshot — the hierarchy is correct at build time and
             // needs no per-plugin runtime fixup. It also puts plexus.core into the realm's Sisu
             // visibility set (RealmManager.computeVisibleNames walks getParentRealm()).
@@ -350,9 +508,36 @@ public final class PrebuiltPluginRealms {
         return report.toString();
     }
 
-    /** Force-loads every class of every realm jar through the realm; failures are tolerated (optional deps). */
-    private static Map<String, Class<?>> loadAllClasses(ClassRealm realm, String jars) throws Exception {
+    /**
+     * Force-loads every class of every realm jar through the realm — keeping ONLY classes that
+     * fully LINK at build time. SVM classifies classes from custom class loaders as
+     * link-at-build-time "by system default" (LinkAtBuildTimeSupport.isIncluded, no opt-out), so
+     * for every class that lands in the image universe:
+     * <ul>
+     * <li>hub creation resolves its declaring/enclosing chain (fatal
+     * "getDeclaringClass0 cannot be called" on LinkageError), and</li>
+     * <li>its methods, once reachable (all are: the Feature registers them for reflection) or
+     * pulled in by class-initializer simulation, are PARSED with eager constant-pool resolution
+     * (fatal "Discovered unresolved type during parsing" on any reference to an absent optional
+     * dependency — e.g. spring-core's Kotlin DSL enums calling kotlin.enums, or signatures naming
+     * a type whose outer implements a missing interface).</li>
+     * </ul>
+     * So a class is baked only if it loads, its declaring chain links, and every class named in
+     * its constant pool loads with a linkable declaring chain too. Anything else is dropped:
+     * narrower than HotSpot's lazy linking, but the dropped classes are exactly the
+     * optional-dependency integration points a Maven build never executes. Drops are logged;
+     * a dropped MOJO class would mean the plugin must not be baked at all.
+     */
+    private static Map<String, Class<?>> loadAllClasses(ClassRealm realm, String jars, Set<String> unlinkable)
+            throws Exception {
         Map<String, Class<?>> classes = new LinkedHashMap<>();
+        Map<String, Set<String>> referencedTypes = new LinkedHashMap<>();
+        // EVERY class name the realm jars contain, whether or not it loaded. A reference to a name
+        // in here can only be satisfied by a class THIS realm bakes: if it never loaded, or gets
+        // dropped below, the reference is dead and its referrers must go too. Names absent from
+        // here (shared API types reached through the strategy parent) are backed by the image
+        // classpath and stand on their own.
+        Set<String> inJars = new LinkedHashSet<>();
         for (String jar : jars.split(File.pathSeparator)) {
             if (jar.isBlank()) {
                 continue;
@@ -360,7 +545,8 @@ public final class PrebuiltPluginRealms {
             try (JarFile jarFile = new JarFile(new File(jar))) {
                 Enumeration<JarEntry> entries = jarFile.entries();
                 while (entries.hasMoreElements()) {
-                    String name = entries.nextElement().getName();
+                    JarEntry entry = entries.nextElement();
+                    String name = entry.getName();
                     if (!name.endsWith(".class")
                             || name.endsWith("module-info.class")
                             || name.startsWith("META-INF/")) {
@@ -368,10 +554,14 @@ public final class PrebuiltPluginRealms {
                     }
                     String className =
                             name.substring(0, name.length() - ".class".length()).replace('/', '.');
+                    inJars.add(className);
                     try {
                         Class<?> c = realm.loadClass(className);
-                        if (!isHostedOnly(c)) {
+                        if (!isHostedOnly(c) && !classes.containsKey(className)) {
                             classes.put(className, c);
+                            try (java.io.InputStream in = jarFile.getInputStream(entry)) {
+                                referencedTypes.put(className, constantPoolClassRefs(in.readAllBytes()));
+                            }
                         }
                     } catch (Throwable t) {
                         // tolerated: classes referencing optional/absent dependencies
@@ -379,7 +569,265 @@ public final class PrebuiltPluginRealms {
                 }
             }
         }
+        // Memoized JVM-side probe: does this name load through the realm with a linkable
+        // declaring/enclosing chain (hub creation requirement, see javadoc)? Necessary but NOT
+        // sufficient on its own — see poisoned() for what the JVM cannot tell us.
+        Map<String, Boolean> probed = new LinkedHashMap<>();
+        java.util.function.Function<String, Boolean> probe = typeName -> probed.computeIfAbsent(typeName, n -> {
+            try {
+                Class<?> ref = realm.loadClass(n);
+                ref.getDeclaringClass();
+                ref.getEnclosingClass();
+                ref.getEnclosingMethod();
+                ref.getEnclosingConstructor();
+                return true;
+            } catch (Throwable t) {
+                return false;
+            }
+        });
+
+        // SVM fully LINKS every registered class (ReflectionDataBuilder.linkType -> JVMCI
+        // ensureLinked), which resolves types appearing only in member DESCRIPTORS — those have no
+        // CONSTANT_Class entry, so the constant-pool scan above cannot see them. Fold those (plus
+        // the supertype closure, each member of which becomes a hub with the same declaring-chain
+        // requirement) into the per-class reference set ONCE, so the fixpoint below is pure set
+        // arithmetic rather than a reflective re-walk every round.
+        // STRUCTURAL references — supertypes and member descriptors. These are resolved regardless of
+        // link-at-build-time: hub creation walks the supertype/declaring chain, and
+        // ReflectionDataBuilder.linkType -> ensureLinked resolves member descriptors of every class
+        // registered for reflection (which is all of them). Kept separate from method-BODY references,
+        // which only have to resolve when the class is forced to link at build time.
+        Map<String, Set<String>> structuralTypes = new LinkedHashMap<>();
+        for (Map.Entry<String, Class<?>> entry : classes.entrySet()) {
+            Set<String> refs = structuralTypes.computeIfAbsent(entry.getKey(), k -> new LinkedHashSet<>());
+            String unreflectable = collectMemberAndSupertypeNames(entry.getValue(), refs);
+            if (unreflectable != null) {
+                // getDeclaredMethods()/getInterfaces() itself threw: the descriptors name types
+                // that do not resolve at all. Poison with a name nothing can ever satisfy.
+                refs.add(POISON + unreflectable);
+            }
+        }
+
+        // Fixpoint drop. A referenced name is POISONED if the JVM probe fails, or the
+        // SanitizeRealmJars link probe rejected it, or it is a realm-jar class that is not (or no
+        // longer) baked. Dropping a class poisons its own name, which can poison its referrers in
+        // turn — hence iterate to a fixpoint. The previous single-pass check missed exactly that
+        // transitivity: commons-compress Coders$1 fails the link probe, so Coders (whose <clinit>
+        // does `new Coders$1()`) has to go too, or SVM's build-time linking of Coders aborts the
+        // whole image build.
+        Map<String, String> dropped = new LinkedHashMap<>();
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            Iterator<Map.Entry<String, Class<?>>> it = classes.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, Class<?>> kept = it.next();
+                String className = kept.getKey();
+                String reason = null;
+                // Classes the SanitizeRealmJars pre-step found to fail REAL JVM linking (the same
+                // JVMCI ResolvedJavaType.link() SVM runs on registered classes). That probe runs in
+                // a separate JVM: calling JVMCI from this (image-baked, build-time-initialized)
+                // class makes the JVMCIRuntime singleton heap-reachable, which SVM rejects.
+                if (unlinkable.contains(className)) {
+                    reason = "JVM linking failed in probe";
+                } else if (!probe.apply(className)) {
+                    reason = "does not link at build time";
+                } else {
+                    for (String ref : structuralTypes.getOrDefault(className, Set.of())) {
+                        if (poisoned(ref, unlinkable, inJars, classes, probe)) {
+                            reason = "member/supertype does not link: " + ref;
+                            break;
+                        }
+                    }
+                    // Method-BODY references only need to resolve when the class is forced to link at
+                    // build time. SelfFirstRealm avoids that (see its javadoc), so a guarded branch
+                    // into an absent optional dependency stays an unresolved symbolic reference —
+                    // just as it does on HotSpot — instead of poisoning every class that leads to it.
+                    if (reason == null && STRICT_CLOSURE) {
+                        for (String ref : referencedTypes.getOrDefault(className, Set.of())) {
+                            if (poisoned(ref, unlinkable, inJars, classes, probe)) {
+                                reason = "references unlinkable " + ref;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (reason != null) {
+                    dropped.put(className, reason);
+                    it.remove();
+                    changed = true;
+                }
+            }
+        }
+        dropped.forEach((className, reason) ->
+                System.out.println("nmvn prebuilt: dropped " + className + " (" + reason + ")"));
         return classes;
+    }
+
+    /** Prefix marking a reference name that can never be satisfied (not a legal binary name). */
+    private static final String POISON = " unreflectable:";
+
+    /**
+     * Is a referenced type name unsatisfiable in the baked realm? Cheap set checks first, the JVM
+     * probe (which loads the class) last.
+     */
+    private static boolean poisoned(
+            String name,
+            Set<String> unlinkable,
+            Set<String> inJars,
+            Map<String, Class<?>> baked,
+            java.util.function.Function<String, Boolean> probe) {
+        if (name.startsWith(POISON) || unlinkable.contains(name)) {
+            return true;
+        }
+        if (inJars.contains(name)) {
+            return !baked.containsKey(name); // only this realm can supply it, so it must be baked
+        }
+        return !probe.apply(name);
+    }
+
+    /**
+     * Per-plugin class names that failed the SanitizeRealmJars link probe, from the file named by
+     * {@code -Dnmvn.prebuilt.unlinkable} (lines: {@code g:a:v<TAB>className}). Absent on plain
+     * JVM runs — there the realms are live and linking stays lazy.
+     */
+    private static Map<String, Set<String>> loadUnlinkable() {
+        String path = System.getProperty("nmvn.prebuilt.unlinkable");
+        if (path == null) {
+            return Map.of();
+        }
+        Map<String, Set<String>> perPlugin = new LinkedHashMap<>();
+        try {
+            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Path.of(path))) {
+                int tab = line.indexOf('\t');
+                if (tab > 0) {
+                    perPlugin.computeIfAbsent(line.substring(0, tab), k -> new LinkedHashSet<>())
+                            .add(line.substring(tab + 1));
+                }
+            }
+        } catch (IOException e) {
+            System.out.println("nmvn prebuilt: cannot read unlinkable list: " + e);
+        }
+        return perPlugin;
+    }
+
+    /**
+     * Adds the binary name of every supertype, and of every type named in a member descriptor, of
+     * {@code c} into {@code sink} — the types SVM resolves when it links a registered class.
+     *
+     * @return null on success, or a description if reflection itself threw (descriptors naming types
+     *     that do not resolve at all), in which case {@code sink} is incomplete and the class must
+     *     be treated as unbakeable.
+     */
+    private static String collectMemberAndSupertypeNames(Class<?> c, Set<String> sink) {
+        try {
+            List<Class<?>> types = new ArrayList<>();
+            for (Class<?> s = c.getSuperclass(); s != null; s = s.getSuperclass()) {
+                types.add(s);
+            }
+            java.util.ArrayDeque<Class<?>> queue = new java.util.ArrayDeque<>(List.of(c));
+            while (!queue.isEmpty()) {
+                for (Class<?> itf : queue.poll().getInterfaces()) {
+                    types.add(itf);
+                    queue.add(itf);
+                }
+            }
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                Collections.addAll(types, m.getParameterTypes());
+                types.add(m.getReturnType());
+                Collections.addAll(types, m.getExceptionTypes());
+            }
+            for (java.lang.reflect.Constructor<?> k : c.getDeclaredConstructors()) {
+                Collections.addAll(types, k.getParameterTypes());
+                Collections.addAll(types, k.getExceptionTypes());
+            }
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                types.add(f.getType());
+            }
+            for (Class<?> type : types) {
+                while (type.isArray()) {
+                    type = type.getComponentType();
+                }
+                if (!type.isPrimitive()) {
+                    sink.add(type.getName());
+                }
+            }
+            return null;
+        } catch (Throwable t) {
+            return t.toString();
+        }
+    }
+
+    /**
+     * Binary class names referenced by the constant pool: CONSTANT_Class entries (arrays skipped)
+     * PLUS every object type named in CONSTANT_NameAndType/CONSTANT_MethodType descriptors. The
+     * latter matter because bytecode VERIFICATION (JVMCI ensureLinked, run by SVM when linking
+     * registered classes) resolves types from invoked members' descriptors for assignability
+     * checks — those types have no CONSTANT_Class entry of their own in the referencing class.
+     */
+    private static Set<String> constantPoolClassRefs(byte[] classBytes) throws IOException {
+        DataInputStream in = new DataInputStream(new java.io.ByteArrayInputStream(classBytes));
+        in.readInt(); // magic
+        in.readUnsignedShort(); // minor
+        in.readUnsignedShort(); // major
+        int count = in.readUnsignedShort();
+        Map<Integer, String> utf8 = new LinkedHashMap<>();
+        List<Integer> classNameIndices = new ArrayList<>();
+        List<Integer> descriptorIndices = new ArrayList<>();
+        for (int i = 1; i < count; i++) {
+            int tag = in.readUnsignedByte();
+            switch (tag) {
+                case 1 -> utf8.put(i, in.readUTF());
+                case 7 -> classNameIndices.add(in.readUnsignedShort());
+                case 16 -> descriptorIndices.add(in.readUnsignedShort()); // MethodType
+                case 12 -> { // NameAndType: name_index, descriptor_index
+                    in.skipBytes(2);
+                    descriptorIndices.add(in.readUnsignedShort());
+                }
+                case 8, 19, 20 -> in.skipBytes(2);
+                case 15 -> in.skipBytes(3);
+                case 3, 4, 9, 10, 11, 17, 18 -> in.skipBytes(4);
+                case 5, 6 -> {
+                    in.skipBytes(8);
+                    i++; // longs/doubles take two constant-pool slots
+                }
+                default -> throw new IOException("Unknown constant pool tag " + tag);
+            }
+        }
+        Set<String> refs = new LinkedHashSet<>();
+        for (int index : classNameIndices) {
+            String internalName = utf8.get(index);
+            if (internalName == null || internalName.startsWith("[")) {
+                continue; // array types resolve through their (separately referenced) element type
+            }
+            refs.add(internalName.replace('/', '.'));
+        }
+        for (int index : descriptorIndices) {
+            String descriptor = utf8.get(index);
+            if (descriptor != null) {
+                addDescriptorObjectTypes(descriptor, refs);
+            }
+        }
+        return refs;
+    }
+
+    /** Adds every L<name>; object type of a field/method descriptor to refs. */
+    private static void addDescriptorObjectTypes(String descriptor, Set<String> refs) {
+        int i = 0;
+        while ((i = descriptor.indexOf('L', i)) >= 0) {
+            char prev = i == 0 ? '(' : descriptor.charAt(i - 1);
+            int end = descriptor.indexOf(';', i);
+            if (end < 0) {
+                return; // not a descriptor (plain name that happens to contain 'L')
+            }
+            // 'L' opens a type only at a type position: start, after (/)/[/; or a primitive tag
+            if (prev == '(' || prev == ')' || prev == '[' || prev == ';' || "BZCSIJFD".indexOf(prev) >= 0) {
+                refs.add(descriptor.substring(i + 1, end).replace('/', '.'));
+                i = end + 1;
+            } else {
+                i++;
+            }
+        }
     }
 
     /**
