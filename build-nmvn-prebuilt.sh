@@ -284,6 +284,7 @@ echo ">>> Building native image ..."
 #  nmvn-native
 
 native-image \
+  -J-XX:MaxRAMPercentage=80.0 \
   -classpath "$CLASSPATH" \
   -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \
   -Dnmvn.prebuilt.unlinkable="$WORK/unlinkable.txt" \
