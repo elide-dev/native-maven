@@ -118,6 +118,18 @@ public final class PrebuiltPluginRealms {
          */
         public final List<Artifact> artifacts;
 
+        /**
+         * Canonical form of the per-plugin {@code <dependencies>} this realm was baked WITH, as
+         * produced by {@link #dependencyKey}. A project's per-plugin dependencies add jars, override
+         * versions and apply exclusions, so they change what the realm must contain — stock Maven puts
+         * them in the realm cache key for exactly that reason. Routing therefore requires an exact
+         * match: serving a realm baked for a different dependency set would run the plugin with a
+         * classpath Maven never built, and it would fail SILENTLY (e.g. kotlin-maven-plugin without
+         * kotlin-maven-allopen still compiles, it just stops applying the 'spring' compiler plugin).
+         * Empty string means the plugin declared none.
+         */
+        public final String dependencyKey;
+
         /** Runtime once-guard: set after the realm's beans are published to the container. */
         public volatile boolean published;
 
@@ -127,13 +139,15 @@ public final class PrebuiltPluginRealms {
                 Map<String, Class<?>> classes,
                 List<ComponentDescriptor<?>> components,
                 List<Class<?>> indexedClasses,
-                List<Artifact> artifacts) {
+                List<Artifact> artifacts,
+                String dependencyKey) {
             this.descriptor = descriptor;
             this.realm = realm;
             this.classes = classes;
             this.components = components;
             this.indexedClasses = indexedClasses;
             this.artifacts = artifacts;
+            this.dependencyKey = dependencyKey;
         }
     }
 
@@ -372,8 +386,13 @@ public final class PrebuiltPluginRealms {
             if (eq < 0) {
                 throw new IllegalArgumentException("Malformed nmvn.prebuilt.plugins entry: " + entry);
             }
-            String ga3 = entry.substring(0, eq).trim(); // groupId:artifactId:version
+            // Left of '=' is "groupId:artifactId:version" optionally followed by
+            // "|<canonical per-plugin dependencies>" (see Prebuilt.dependencyKey).
+            String coordinates = entry.substring(0, eq).trim();
             String jars = entry.substring(eq + 1).trim();
+            int bar = coordinates.indexOf(DEPENDENCY_SEPARATOR);
+            String dependencyKey = bar < 0 ? "" : coordinates.substring(bar + 1).trim();
+            String ga3 = bar < 0 ? coordinates : coordinates.substring(0, bar).trim();
 
             String[] gav = ga3.split(":");
             if (gav.length != 3) {
@@ -422,7 +441,11 @@ public final class PrebuiltPluginRealms {
 
             // Step 2: force-load EVERY class of every realm jar (the frozen realm cannot load at
             // runtime). Anything that would not survive SVM's build-time linking is dropped here.
-            Map<String, Class<?>> classes = loadAllClasses(realm, jars, unlinkableAll.getOrDefault(ga3, Set.of()));
+            // Keyed by the FULL left side of the spec entry (GAV plus any |dependencies), because
+            // that is what SanitizeRealmJars writes into unlinkable.txt — looking up the bare GAV
+            // would silently find nothing and stop dropping classes that fail real JVM linking.
+            Map<String, Class<?>> classes =
+                    loadAllClasses(realm, jars, unlinkableAll.getOrDefault(coordinates, Set.of()));
 
             // Step 2b: BAKE-OR-FALL-BACK GATE. Dropping a class is only acceptable for the
             // optional-dependency integration points a Maven build never executes. If a MOJO's own
@@ -491,7 +514,7 @@ public final class PrebuiltPluginRealms {
 
             BY_KEY.put(
                     groupId + ":" + artifactId,
-                    new Prebuilt(descriptor, realm, classes, components, indexedClasses, artifacts));
+                    new Prebuilt(descriptor, realm, classes, components, indexedClasses, artifacts, dependencyKey));
             report.append(groupId)
                     .append(':')
                     .append(artifactId)
@@ -1137,12 +1160,18 @@ public final class PrebuiltPluginRealms {
         return CORE_REALM;
     }
 
+    /** Separates the GAV from the canonical dependency key inside one {@code nmvn.prebuilt.plugins} entry. */
+    private static final char DEPENDENCY_SEPARATOR = '|';
+
     /**
      * Routing decision used by the seeded caches: the prebuilt entry for the requested plugin, or
-     * {@code null} to fall back to stock dynamic resolution. A baked plugin is used only on an
-     * exact version match — it must never silently stand in for a different requested version.
+     * {@code null} to fall back to stock dynamic resolution. A baked plugin is used only on an exact
+     * match of BOTH the version and the per-plugin {@code <dependencies>} — it must never silently
+     * stand in for a plugin whose realm Maven would have built differently. Any doubt falls back to
+     * dynamic resolution, which is always correct (just slower), so the comparison errs strict.
      */
-    public static Prebuilt match(String groupId, String artifactId, String requestedVersion) {
+    public static Prebuilt match(
+            String groupId, String artifactId, String requestedVersion, String requestedDependencyKey) {
         Prebuilt prebuilt = BY_KEY.get(groupId + ":" + artifactId);
         if (prebuilt == null) {
             return null;
@@ -1151,7 +1180,60 @@ public final class PrebuiltPluginRealms {
         if (requestedVersion != null && baked != null && !requestedVersion.equals(baked)) {
             return null;
         }
+        if (!prebuilt.dependencyKey.equals(requestedDependencyKey == null ? "" : requestedDependencyKey)) {
+            return null;
+        }
         return prebuilt;
+    }
+
+    /**
+     * Canonical, order-independent encoding of a plugin's {@code <dependencies>}, used on both sides of
+     * the routing comparison: the build script emits it into {@code nmvn.prebuilt.plugins} from the
+     * effective pom, and the caches compute it here from the runtime model. Encoding MUST stay in sync
+     * with the {@code canonical_dependencies} helper in build-nmvn-for-pom.sh.
+     *
+     * <p>Form: {@code g:a:v:type:classifier:scope} per dependency (defaults applied so an omitted
+     * {@code <scope>} and an explicit {@code compile} agree), exclusions appended as
+     * {@code ^g:a} sorted, then the dependency strings sorted and joined with {@code ,}. Sorting makes
+     * declaration order irrelevant, which matches Maven — order affects resolution tie-breaks, not
+     * realm membership, and a mismatch here only costs us a fallback.
+     */
+    public static String dependencyKey(List<org.apache.maven.model.Dependency> dependencies) {
+        if (dependencies == null || dependencies.isEmpty()) {
+            return "";
+        }
+        List<String> encoded = new ArrayList<>(dependencies.size());
+        for (org.apache.maven.model.Dependency d : dependencies) {
+            StringBuilder sb = new StringBuilder()
+                    .append(orEmpty(d.getGroupId()))
+                    .append(':')
+                    .append(orEmpty(d.getArtifactId()))
+                    .append(':')
+                    .append(orEmpty(d.getVersion()))
+                    .append(':')
+                    .append(d.getType() == null || d.getType().isEmpty() ? "jar" : d.getType())
+                    .append(':')
+                    .append(orEmpty(d.getClassifier()))
+                    .append(':')
+                    .append(d.getScope() == null || d.getScope().isEmpty() ? "compile" : d.getScope());
+            List<String> exclusions = new ArrayList<>();
+            if (d.getExclusions() != null) {
+                for (org.apache.maven.model.Exclusion e : d.getExclusions()) {
+                    exclusions.add(orEmpty(e.getGroupId()) + ":" + orEmpty(e.getArtifactId()));
+                }
+            }
+            Collections.sort(exclusions);
+            for (String exclusion : exclusions) {
+                sb.append('^').append(exclusion);
+            }
+            encoded.add(sb.toString());
+        }
+        Collections.sort(encoded);
+        return String.join(",", encoded);
+    }
+
+    private static String orEmpty(String s) {
+        return s == null ? "" : s;
     }
 
     public static Map<String, Prebuilt> all() {

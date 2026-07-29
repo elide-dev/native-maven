@@ -19,9 +19,14 @@
 # Notes / limitations:
 #  - Profiles: only plugins of profiles active during extraction are seen. Pass a representative
 #    activation environment if the project's build relies on profile-added plugins.
-#  - Plugins declaring extra per-plugin <dependencies> or <extensions>true</extensions> are
-#    excluded: the runtime deliberately serves those dynamically (see the routing predicate in
-#    PrebuiltPluginDescriptorCache/PrebuiltPluginRealmCache), so baking them is wasted image size.
+#  - Plugins declaring per-plugin <dependencies> ARE baked, with those dependencies folded into the
+#    realm. Generic (non-pom-specific) images cannot do this — the same plugin version needs a
+#    different realm per project — but this image is built for ONE pom, so the dependency set is
+#    known here. The emitted entry carries a canonical encoding of it and the runtime routing
+#    predicate demands an exact match, falling back to dynamic resolution otherwise. Without this,
+#    kotlin-maven-plugin (which gets kotlin-maven-allopen this way) could never be baked.
+#  - <extensions>true</extensions> plugins are still excluded: they get a structurally different
+#    realm (different imports and visibility), not just different contents.
 #  - Mojo jar resources are baked into each realm by PrebuiltPluginRealms (BakedClassLoader
 #    serves them from memory), so no per-plugin -H:IncludeResources patterns are needed.
 #
@@ -87,6 +92,28 @@ def text(e, name, default=None):
     k = kids(e, name)
     return k[0].text.strip() if k and k[0].text and k[0].text.strip() else default
 
+def canonical_dependencies(plugin):
+    """Canonical encoding of a plugin's <dependencies>, byte-identical to
+    PrebuiltPluginRealms.dependencyKey — the two are compared at runtime to decide whether the baked
+    realm still matches what Maven would build. Keep both in sync."""
+    encoded = []
+    for deps in kids(plugin, 'dependencies'):
+        for d in kids(deps, 'dependency'):
+            exclusions = sorted(
+                f"{text(e, 'groupId', '')}:{text(e, 'artifactId', '')}"
+                for excls in kids(d, 'exclusions')
+                for e in kids(excls, 'exclusion'))
+            encoded.append(':'.join([
+                text(d, 'groupId', ''),
+                text(d, 'artifactId', ''),
+                text(d, 'version', ''),
+                text(d, 'type', 'jar'),
+                text(d, 'classifier', ''),
+                text(d, 'scope', 'compile'),
+            ]) + ''.join('^' + x for x in exclusions))
+    return ','.join(sorted(encoded))
+
+
 root = ET.parse(sys.argv[1]).getroot()
 projects = [root] if local(root.tag) == 'project' else [c for c in root if local(c.tag) == 'project']
 
@@ -98,20 +125,24 @@ for project in projects:
                 g = text(plugin, 'groupId', 'org.apache.maven.plugins')
                 a = text(plugin, 'artifactId')
                 v = text(plugin, 'version')
+                deps = canonical_dependencies(plugin)
+                # Entry identity includes the dependencies: the SAME plugin version configured with
+                # different per-plugin <dependencies> in two modules needs two different realms, and
+                # only one of them can be baked (realms are keyed by groupId:artifactId).
                 gav = f"{g}:{a}:{v}"
-                if gav in seen:
+                entry = f"{gav}|{deps}" if deps else gav
+                if entry in seen:
                     continue
-                seen.add(gav)
+                seen.add(entry)
                 if v is None:
                     print(f"skip {g}:{a}: no resolved version", file=sys.stderr)
-                    continue
-                if any(kids(deps, 'dependency') for deps in kids(plugin, 'dependencies')):
-                    print(f"skip {gav}: per-plugin <dependencies> force dynamic resolution", file=sys.stderr)
                     continue
                 if text(plugin, 'extensions') == 'true':
                     print(f"skip {gav}: extensions plugins are served dynamically", file=sys.stderr)
                     continue
-                print(gav)
+                if deps:
+                    print(f"note {gav}: baking with per-plugin <dependencies> {deps}", file=sys.stderr)
+                print(entry)
 PY
 
 GAVS=()

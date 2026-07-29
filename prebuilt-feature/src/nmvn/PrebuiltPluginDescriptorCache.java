@@ -54,12 +54,19 @@ public class PrebuiltPluginDescriptorCache extends DefaultPluginDescriptorCache 
     public Key createKey(Plugin plugin, List<RemoteRepository> repositories, RepositorySystemSession session) {
         // Same routing predicate as PrebuiltPluginRealmCache: a plugin is either fully prebuilt or
         // fully dynamic. Serving a baked descriptor (which has no pluginArtifact) while the realm
-        // side falls back to stock createPluginRealm would NPE on getPluginArtifact(). Extra
-        // per-plugin <dependencies> and <extensions>true</extensions> both take dynamic realm
-        // paths, so they must get a dynamic descriptor too.
-        if (plugin.getDependencies().isEmpty() && !plugin.isExtensions()) {
-            PrebuiltPluginRealms.Prebuilt prebuilt =
-                    PrebuiltPluginRealms.match(plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion());
+        // side falls back to stock createPluginRealm would NPE on getPluginArtifact().
+        //
+        // Per-plugin <dependencies> are ALLOWED here (a pom-specialized image knows them at build
+        // time and bakes them into the realm), but match() requires them to be identical to the ones
+        // the realm was baked with. <extensions>true</extensions> stays dynamic unconditionally:
+        // extension plugins get a structurally different realm — different imports and visibility —
+        // not merely different contents.
+        if (!plugin.isExtensions()) {
+            PrebuiltPluginRealms.Prebuilt prebuilt = PrebuiltPluginRealms.match(
+                    plugin.getGroupId(),
+                    plugin.getArtifactId(),
+                    plugin.getVersion(),
+                    PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()));
             if (prebuilt != null) {
                 return new PrebuiltKey(prebuilt);
             }

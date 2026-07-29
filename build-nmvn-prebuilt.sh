@@ -111,9 +111,52 @@ EXPORTED_ARTIFACTS=$(unzip -p "$MAVEN_HOME"/lib/maven-core-*.jar META-INF/maven/
   | sed -n 's/.*<exportedArtifact>\(.*\)<\/exportedArtifact>.*/\1/p')
 
 PREBUILT_SPEC=""
-for GAV in "${PLUGINS[@]}"; do
+for ENTRY in "${PLUGINS[@]}"; do
+  # Each entry is "groupId:artifactId:version" optionally followed by "|<canonical dependencies>"
+  # (emitted by build-nmvn-for-pom.sh; see PrebuiltPluginRealms.dependencyKey for the encoding).
+  GAV="${ENTRY%%|*}"
+  DEP_KEY=""
+  [ "$ENTRY" != "$GAV" ] && DEP_KEY="${ENTRY#*|}"
   G="${GAV%%:*}"; REST="${GAV#*:}"; A="${REST%%:*}"; V="${REST#*:}"
   CP_FILE="$WORK/$A.cp"
+
+  # Per-plugin <dependencies> are declared BOTH as dependencies (so added jars land in the realm) and
+  # in <dependencyManagement> (so they override versions inside the plugin's own tree) — the two
+  # effects Maven's plugin dependency resolution gives them. Decoded from the canonical key, whose
+  # per-entry form is g:a:v:type:classifier:scope with ^-separated exclusions appended.
+  DEP_XML=""
+  DEP_MGMT_XML=""
+  if [ -n "$DEP_KEY" ]; then
+    while IFS= read -r dep; do
+      [ -z "$dep" ] && continue
+      COORDS="${dep%%^*}"
+      EXCLS=""
+      if [ "$dep" != "$COORDS" ]; then
+        REMAINDER="${dep#*^}"
+        while [ -n "$REMAINDER" ]; do
+          ONE="${REMAINDER%%^*}"
+          EXCLS="$EXCLS
+          <exclusion><groupId>${ONE%%:*}</groupId><artifactId>${ONE#*:}</artifactId></exclusion>"
+          [ "$REMAINDER" = "$ONE" ] && break
+          REMAINDER="${REMAINDER#*^}"
+        done
+        EXCLS="<exclusions>$EXCLS
+        </exclusions>"
+      fi
+      IFS=':' read -r dg da dv dtype dclass dscope <<< "$COORDS"
+      # ${x:+...} rather than $([ -n "$x" ] && echo ...): the latter exits non-zero when the
+      # classifier is empty, which under 'set -e' aborts the whole build.
+      BLOCK="    <dependency>
+      <groupId>$dg</groupId><artifactId>$da</artifactId><version>$dv</version>
+      <type>${dtype:-jar}</type>${dclass:+<classifier>$dclass</classifier>}
+      <scope>${dscope:-compile}</scope>$EXCLS
+    </dependency>"
+      DEP_XML="$DEP_XML
+$BLOCK"
+      DEP_MGMT_XML="$DEP_MGMT_XML
+$BLOCK"
+    done <<< "$(printf '%s' "$DEP_KEY" | tr ',' '\n')"
+  fi
 
   cat > "$WORK/pom.xml" <<POM
 <project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -122,17 +165,21 @@ for GAV in "${PLUGINS[@]}"; do
   <artifactId>prebuilt-cp</artifactId>
   <version>1</version>
   <packaging>pom</packaging>
+  <dependencyManagement>
+    <dependencies>$DEP_MGMT_XML
+    </dependencies>
+  </dependencyManagement>
   <dependencies>
     <dependency>
       <groupId>$G</groupId>
       <artifactId>$A</artifactId>
       <version>$V</version>
-    </dependency>
+    </dependency>$DEP_XML
   </dependencies>
 </project>
 POM
 
-  echo ">>> Resolving runtime classpath for $GAV ..."
+  echo ">>> Resolving runtime classpath for $GAV ${DEP_KEY:+(+ per-plugin deps: $DEP_KEY)}..."
   mvn -q -f "$WORK/pom.xml" \
       org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath \
       -Dmdep.outputFile="$CP_FILE" \
@@ -167,8 +214,10 @@ PY
   fi
   echo ">>> $A realm jars: $PLUGIN_JARS"
 
-  # The spec consumed by PrebuiltPluginRealms (';'-separated g:a:v=jar1:jar2:... entries).
-  PREBUILT_SPEC="${PREBUILT_SPEC:+$PREBUILT_SPEC;}$GAV=$PLUGIN_JARS"
+  # The spec consumed by PrebuiltPluginRealms (';'-separated entries, each
+  # g:a:v[|canonical-dependencies]=jar1:jar2:...). The dependency key travels with the entry so the
+  # runtime can require an exact match before serving the baked realm.
+  PREBUILT_SPEC="${PREBUILT_SPEC:+$PREBUILT_SPEC;}$GAV${DEP_KEY:+|$DEP_KEY}=$PLUGIN_JARS"
 done
 
 # ---------------------------------------------------------------------------------------------------

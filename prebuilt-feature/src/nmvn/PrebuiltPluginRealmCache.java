@@ -88,12 +88,17 @@ public class PrebuiltPluginRealmCache extends DefaultPluginRealmCache {
             DependencyFilter dependencyFilter,
             List<RemoteRepository> repositories,
             RepositorySystemSession session) {
-        if (plugin.getDependencies().isEmpty()) {
-            PrebuiltPluginRealms.Prebuilt prebuilt =
-                    PrebuiltPluginRealms.match(plugin.getGroupId(), plugin.getArtifactId(), plugin.getVersion());
-            if (prebuilt != null) {
-                return new PrebuiltKey(prebuilt, plugin);
-            }
+        // Per-plugin <dependencies> are allowed, but match() demands they be exactly the ones the
+        // realm was baked with — they add jars, override versions and apply exclusions, so a
+        // different set means a different realm (stock DefaultPluginRealmCache.createKey includes
+        // them in its key for the same reason). Mismatch falls through to dynamic resolution.
+        PrebuiltPluginRealms.Prebuilt prebuilt = PrebuiltPluginRealms.match(
+                plugin.getGroupId(),
+                plugin.getArtifactId(),
+                plugin.getVersion(),
+                PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()));
+        if (prebuilt != null) {
+            return new PrebuiltKey(prebuilt, plugin);
         }
         return super.createKey(plugin, parent, foreignImports, dependencyFilter, repositories, session);
     }
