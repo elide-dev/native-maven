@@ -8,13 +8,11 @@
 # initializer at IMAGE BUILD TIME and frozen into the image (see PrebuiltPluginRealms.java).
 # Every other plugin still resolves dynamically at runtime via Crema (RuntimeClassLoading).
 #
-# This is a single-plugin proof of concept. Run it; do not expect it to be tuned.
-#
 # Usage:
-#   ./build-nmvn-prebuilt.sh [groupId:artifactId:version ...]
+#   ./build-nmvn-prebuilt.sh [groupId:artifactId:version[|deps] ...]
 #
-# Plugins to bake can be passed as arguments (one g:a:v each); without arguments the default
-# list below is used. See build-nmvn-for-pom.sh for deriving the list from a project's pom.xml.
+# Plugins to bake can be passed as arguments (one g:a:v each, optionally with |canonical-deps
+# from build-nmvn-for-pom.sh); without arguments the default list below is used.
 #
 set -euo pipefail
 
@@ -180,7 +178,10 @@ $BLOCK"
 POM
 
   echo ">>> Resolving runtime classpath for $GAV ${DEP_KEY:+(+ per-plugin deps: $DEP_KEY)}..."
-  mvn -q -f "$WORK/pom.xml" \
+  # Prefer the dist's mvn (same snapshot the image embeds) over whatever is on PATH.
+  RESOLVE_MVN="$MAVEN_HOME/bin/mvn"
+  [ -x "$RESOLVE_MVN" ] || RESOLVE_MVN=mvn
+  "$RESOLVE_MVN" -q -f "$WORK/pom.xml" \
       org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath \
       -Dmdep.outputFile="$CP_FILE" \
       -DincludeScope=runtime
@@ -212,6 +213,56 @@ PY
     echo "Error: could not resolve runtime classpath for $GAV"
     exit 1
   fi
+
+  # kotlin-compiler-embeddable ships IntelliJ XML DOM types (e.g. XmlElement) that are compiled
+  # against kotlinx.serialization (KSerializer[] in member signatures) but does NOT declare that
+  # library as a Maven dependency and does not shade it. On HotSpot the plugin still works because
+  # those members are never reflected; at bake time PrebuiltPluginRealms walks getDeclaredMethods
+  # of every realm class, hits NoClassDefFoundError: KSerializer, poisons XmlElement, and the
+  # poison cascades to K2JVMCompileMojo — the whole plugin is then SKIPPED->dynamic. Under Crema
+  # that fallback fails kapt with IncompatibleClassChangeError on kotlin-reflect enum bodies.
+  # Inject kotlinx-serialization-core-jvm so the bake gate keeps the mojos.
+  if printf '%s' "$PLUGIN_JARS" | tr ':' '\n' | grep -q '/kotlin-compiler-embeddable-'; then
+    SER_VER="${KOTLINX_SERIALIZATION_VERSION:-1.9.0}"
+    SER_POM="$WORK/kotlinx-serialization-pom.xml"
+    SER_CP="$WORK/kotlinx-serialization.cp"
+    cat > "$SER_POM" <<SERPOM
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>nmvn</groupId>
+  <artifactId>prebuilt-ser</artifactId>
+  <version>1</version>
+  <packaging>pom</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId>
+      <artifactId>kotlinx-serialization-core-jvm</artifactId>
+      <version>$SER_VER</version>
+    </dependency>
+  </dependencies>
+</project>
+SERPOM
+    echo ">>> Adding kotlinx-serialization-core-jvm:$SER_VER (required by kotlin-compiler-embeddable bake)..."
+    "$RESOLVE_MVN" -q -f "$SER_POM" \
+        org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath \
+        -Dmdep.outputFile="$SER_CP" \
+        -DincludeScope=runtime
+    # Only the serialization artifact itself — not its transitive kotlin-stdlib, which may be an
+    # older version than the one already on the kotlin realm and would reintroduce version mixing.
+    while IFS= read -r ser_jar; do
+      [ -z "$ser_jar" ] && continue
+      case "$ser_jar" in
+        *kotlinx-serialization*) ;;
+        *) continue ;;
+      esac
+      case ":$PLUGIN_JARS:" in
+        *":$ser_jar:"*) ;;
+        *) PLUGIN_JARS="$PLUGIN_JARS:$ser_jar"
+           echo "    + $ser_jar" ;;
+      esac
+    done <<< "$(tr ':' '\n' < "$SER_CP")"
+  fi
+
   echo ">>> $A realm jars: $PLUGIN_JARS"
 
   # The spec consumed by PrebuiltPluginRealms (';'-separated entries, each
