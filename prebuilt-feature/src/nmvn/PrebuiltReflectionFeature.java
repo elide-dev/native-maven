@@ -3,14 +3,20 @@ package nmvn;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -124,10 +130,14 @@ public final class PrebuiltReflectionFeature implements Feature {
                     // at build time, so such a reference now yields a runtime LinkageError exactly as
                     // on HotSpot. Full registration is therefore affordable again, and the narrower
                     // policy bought ~9% fewer registered methods at the cost of correctness.
-                    RuntimeReflection.register(c);
-                    RuntimeReflection.register(c.getDeclaredConstructors());
-                    RuntimeReflection.register(c.getDeclaredMethods());
-                    RuntimeReflection.register(c.getDeclaredFields());
+                    //
+                    // Constructors are ONLY registered for concrete, instantiable classes. Baking
+                    // kotlin-compiler-embeddable pulls in tens of thousands of abstract types /
+                    // interfaces; RuntimeReflection.register(ctor) builds a Substrate factory
+                    // accessor (FactoryMethodSupport) that aborts with "Must be a non-abstract
+                    // instance class" for those. Guice/Plexus only need reflective newInstance on
+                    // concrete DI/config types, never on abstract Kotlin IR/FIR nodes.
+                    registerReflectiveSurface(c);
                 } catch (Throwable t) {
                     failed++;
                 }
@@ -136,6 +146,90 @@ public final class PrebuiltReflectionFeature implements Feature {
                     + failed + " failed) for " + key);
         });
         System.out.println("nmvn feature: " + PrebuiltPluginRealms.STATUS);
+    }
+
+    /**
+     * Registers class + methods + fields always; constructors only when SVM can build a factory
+     * accessor ({@code non-abstract instance class}) and the type is a plausible reflective
+     * instantiation target (see {@link #needsReflectiveInstantiation}).
+     */
+    private static void registerReflectiveSurface(Class<?> c) {
+        RuntimeReflection.register(c);
+
+        Method[] methods = c.getDeclaredMethods();
+        if (methods.length > 0) {
+            RuntimeReflection.register(methods);
+        }
+
+        Field[] fields = c.getDeclaredFields();
+        if (fields.length > 0) {
+            RuntimeReflection.register(fields);
+        }
+
+        if (!isReflectivelyInstantiable(c) || !needsReflectiveInstantiation(c)) {
+            return;
+        }
+        Constructor<?>[] constructors = c.getDeclaredConstructors();
+        if (constructors.length == 0) {
+            return;
+        }
+        List<Constructor<?>> safe = new ArrayList<>(constructors.length);
+        for (Constructor<?> ctor : constructors) {
+            if (isReflectivelyInstantiable(ctor.getDeclaringClass())) {
+                safe.add(ctor);
+            }
+        }
+        if (!safe.isEmpty()) {
+            RuntimeReflection.register(safe.toArray(Constructor<?>[]::new));
+        }
+    }
+
+    /**
+     * Types for which {@code Constructor.newInstance} is legal on HotSpot and for which SVM's
+     * {@code FactoryMethodSupport} accepts a factory accessor. Mirrors the non-error branch of
+     * {@code ReflectionFeature.createAccessor} for constructors — abstract classes, interfaces,
+     * arrays, primitives, and abstract enums (enum constants with bodies make the enum ACC_ABSTRACT)
+     * must not be registered for reflective instantiation.
+     */
+    private static boolean isReflectivelyInstantiable(Class<?> c) {
+        if (c == null || c.isInterface() || c.isAnnotation() || c.isArray() || c.isPrimitive()) {
+            return false;
+        }
+        // Abstract class or abstract enum (enum with constant-specific class bodies).
+        if (Modifier.isAbstract(c.getModifiers())) {
+            return false;
+        }
+        // Hidden / local / anonymous types are almost never DI roots; skipping them avoids edge
+        // cases with custom realm loaders and FactoryMethodSupport classification.
+        if (c.isHidden() || c.isLocalClass() || c.isAnonymousClass()) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether Guice/Plexus (or similar) might {@code newInstance} this type. Compiler internals
+     * from kotlin-compiler-embeddable are called via normal (AOT) call edges once loaded — they are
+     * never constructed by Maven's DI. Registering their constructors is what blew up native-image
+     * with {@code FactoryMethodSupport: Must be a non-abstract instance class} once Kotlin was
+     * actually baked (~30k types, ~155k reflect registrations).
+     *
+     * <p>Keep constructors for: mojos, Maven/Plexus glue, and typical plugin config beans. Skip the
+     * Kotlin/IntelliJ compiler bulk (still fully registered for methods/fields so config-style
+     * reflective access works if it ever appears).
+     */
+    private static boolean needsReflectiveInstantiation(Class<?> c) {
+        String name = c.getName();
+        // Kotlin stdlib / compiler / IntelliJ-shaded-in-compiler — not Maven DI components.
+        if (name.startsWith("kotlin.")
+                || name.startsWith("kotlinx.")
+                || name.startsWith("org.jetbrains.kotlin.")
+                || name.startsWith("org.jetbrains.kotlinx.")) {
+            // Exception: the Maven plugin mojos themselves live under org.jetbrains.kotlin.maven
+            // and MUST be instantiable via Guice.
+            return name.startsWith("org.jetbrains.kotlin.maven.");
+        }
+        return true;
     }
 
     /**
