@@ -21,6 +21,8 @@ import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
+import org.apache.maven.plugin.descriptor.MojoDescriptor;
+import org.codehaus.plexus.component.repository.ComponentDescriptor;
 import org.graalvm.nativeimage.hosted.Feature;
 import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.nativeimage.hosted.RuntimeResourceAccess;
@@ -98,7 +100,11 @@ public final class PrebuiltReflectionFeature implements Feature {
         }
         registerCoreResources(access);
         PrebuiltPluginRealms.all().forEach((key, prebuilt) -> {
+            Set<Class<?>> diRoots = diRoots(prebuilt);
+            boolean bulk = isBulkPlugin(key);
             int failed = 0;
+            int full = 0;
+            int classOnly = 0;
             for (Class<?> c : prebuilt.classes.values()) {
                 // Probe BEFORE registering: ReflectionDataBuilder parses each registered class's
                 // generic signatures asynchronously during analysis, and ancient bytecode with
@@ -111,50 +117,73 @@ public final class PrebuiltReflectionFeature implements Feature {
                     continue;
                 }
                 try {
-                    // Register the FULL surface: class (queryable by name), constructors (Guice/sisu
-                    // instantiation), fields and methods.
-                    //
-                    // Methods deliberately included for EVERY baked class, not just the DI entry
-                    // points. Plexus configures mojo parameters through ComponentValueSetter, which
-                    // prefers a SETTER over direct field access, and it does so recursively for
-                    // nested <configuration> beans — objects that are not mojos, not sisu-indexed and
-                    // not declared in components.xml, so no reachable-from-the-descriptor rule finds
-                    // them. Narrowing this to the DI roots broke exactly that: spotless failed with
-                    // "Cannot reflectively invoke FormatterFactory.addLicenseHeader(LicenseHeader)"
-                    // while configuring <java><licenseHeader>.
-                    //
-                    // Registering a method makes it an image root, so SVM parses its body — which
-                    // USED to force build-time resolution of everything the body names and turn every
-                    // guarded optional-dependency branch (jansi, kotlin-reflect, ...) into a dropped
-                    // class. SelfFirstRealm removed that: baked classes are no longer forced to link
-                    // at build time, so such a reference now yields a runtime LinkageError exactly as
-                    // on HotSpot. Full registration is therefore affordable again, and the narrower
-                    // policy bought ~9% fewer registered methods at the cost of correctness.
-                    //
-                    // Constructors are ONLY registered for concrete, instantiable classes. Baking
-                    // kotlin-compiler-embeddable pulls in tens of thousands of abstract types /
-                    // interfaces; RuntimeReflection.register(ctor) builds a Substrate factory
-                    // accessor (FactoryMethodSupport) that aborts with "Must be a non-abstract
-                    // instance class" for those. Guice/Plexus only need reflective newInstance on
-                    // concrete DI/config types, never on abstract Kotlin IR/FIR nodes.
-                    registerReflectiveSurface(c);
+                    // Full method/field registration on EVERY baked class makes each method an
+                    // analysis root. With kotlin (~30k) + spotbugs (~17k) + site (~6k) that is
+                    // enough to OOM a 50GiB native-image analysis. For "bulk" plugins we only fully
+                    // reflect DI roots (mojos / components / sisu index); everything else is
+                    // class-only (still in the baked map for normal AOT calls). Smaller plugins
+                    // (spotless, spring-boot, …) keep full surfaces so nested Plexus config beans
+                    // keep working.
+                    boolean fullSurface = !bulk || diRoots.contains(c);
+                    registerReflectiveSurface(c, fullSurface);
+                    if (fullSurface) {
+                        full++;
+                    } else {
+                        classOnly++;
+                    }
                 } catch (Throwable t) {
                     failed++;
                 }
             }
-            System.out.println("nmvn feature: registered " + (prebuilt.classes.size() - failed) + " classes ("
-                    + failed + " failed) for " + key);
+            System.out.println("nmvn feature: registered " + (prebuilt.classes.size() - failed) + " classes for "
+                    + key + " (full=" + full + ", class-only=" + classOnly + ", failed=" + failed
+                    + (bulk ? ", bulk-plugin" : "") + ")");
         });
         System.out.println("nmvn feature: " + PrebuiltPluginRealms.STATUS);
     }
 
     /**
-     * Registers class + methods + fields always; constructors only when SVM can build a factory
-     * accessor ({@code non-abstract instance class}) and the type is a plausible reflective
-     * instantiation target (see {@link #needsReflectiveInstantiation}).
+     * Plugins whose realms are tens of thousands of classes (compilers, static analyzers, site).
+     * Full reflective surfaces there are not needed for Maven DI and dominate native-image RAM.
      */
-    private static void registerReflectiveSurface(Class<?> c) {
+    private static boolean isBulkPlugin(String pluginKey) {
+        // pluginKey is groupId:artifactId
+        return pluginKey.endsWith(":kotlin-maven-plugin")
+                || pluginKey.endsWith(":spotbugs-maven-plugin")
+                || pluginKey.endsWith(":maven-site-plugin")
+                || pluginKey.endsWith(":maven-surefire-plugin")
+                || pluginKey.endsWith(":maven-failsafe-plugin");
+    }
+
+    /** Classes Guice/Sisu must construct or that are known plugin-internal components. */
+    private static Set<Class<?>> diRoots(PrebuiltPluginRealms.Prebuilt prebuilt) {
+        Set<Class<?>> roots = new HashSet<>();
+        for (MojoDescriptor mojo : prebuilt.descriptor.getMojos()) {
+            Class<?> impl = mojo.getImplementationClass();
+            if (impl != null) {
+                roots.add(impl);
+            }
+        }
+        for (ComponentDescriptor<?> component : prebuilt.components) {
+            Class<?> impl = component.getImplementationClass();
+            if (impl != null) {
+                roots.add(impl);
+            }
+        }
+        roots.addAll(prebuilt.indexedClasses);
+        return roots;
+    }
+
+    /**
+     * @param fullSurface if true: class + methods + fields + safe constructors (Plexus config /
+     *     Guice). if false: class only — type stays heap-reachable from the baked map for normal
+     *     calls, but does not explode points-to with every method as a reflection root.
+     */
+    private static void registerReflectiveSurface(Class<?> c, boolean fullSurface) {
         RuntimeReflection.register(c);
+        if (!fullSurface) {
+            return;
+        }
 
         Method[] methods = c.getDeclaredMethods();
         if (methods.length > 0) {

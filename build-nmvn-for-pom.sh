@@ -150,6 +150,31 @@ while IFS= read -r line; do
   [ -n "$line" ] && GAVS+=("$line")
 done < "$WORK/plugins.list"
 
+# Optional skip list: comma-separated artifactIds (or g:a) not to bake — they stay dynamic/Crema.
+# Useful to cut native-image RAM: spotbugs + site alone are ~22k classes.
+#   NMVN_SKIP_PLUGINS=spotbugs-maven-plugin,maven-site-plugin,maven-source-plugin
+if [ -n "${NMVN_SKIP_PLUGINS:-}" ]; then
+  FILTERED=()
+  for entry in "${GAVS[@]}"; do
+    gav="${entry%%|*}"
+    art="${gav#*:}"; art="${art%%:*}"
+    ga="${gav%:*}"; ga="${ga%%|*}"
+    skip=0
+    IFS=',' read -r -a skips <<< "$NMVN_SKIP_PLUGINS"
+    for s in "${skips[@]}"; do
+      s=$(echo "$s" | tr -d ' ')
+      [ -z "$s" ] && continue
+      if [ "$s" = "$art" ] || [ "$s" = "$ga" ] || [ "$s" = "$gav" ]; then
+        skip=1
+        echo ">>> skip bake (NMVN_SKIP_PLUGINS): $entry" >&2
+        break
+      fi
+    done
+    [ "$skip" -eq 0 ] && FILTERED+=("$entry")
+  done
+  GAVS=("${FILTERED[@]+"${FILTERED[@]}"}")
+fi
+
 if [ ${#GAVS[@]} -eq 0 ]; then
   echo "Error: no bakeable plugins derived from $POM"
   exit 1

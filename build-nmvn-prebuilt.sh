@@ -75,6 +75,29 @@ if [ "$#" -gt 0 ]; then
   PLUGINS=("$@")
 fi
 
+# Drop plugins listed in NMVN_SKIP_PLUGINS (comma-separated artifactId or g:a), same as for-pom.
+if [ -n "${NMVN_SKIP_PLUGINS:-}" ] && [ "${#PLUGINS[@]}" -gt 0 ]; then
+  FILTERED=()
+  for entry in "${PLUGINS[@]}"; do
+    gav="${entry%%|*}"
+    art="${gav#*:}"; art="${art%%:*}"
+    ga="${gav%:*}"
+    skip=0
+    IFS=',' read -r -a skips <<< "$NMVN_SKIP_PLUGINS"
+    for s in "${skips[@]}"; do
+      s=$(echo "$s" | tr -d ' ')
+      [ -z "$s" ] && continue
+      if [ "$s" = "$art" ] || [ "$s" = "$ga" ] || [ "$s" = "$gav" ]; then
+        skip=1
+        echo ">>> skip bake (NMVN_SKIP_PLUGINS): $entry"
+        break
+      fi
+    done
+    [ "$skip" -eq 0 ] && FILTERED+=("$entry")
+  done
+  PLUGINS=("${FILTERED[@]+"${FILTERED[@]}"}")
+fi
+
 # ---------------------------------------------------------------------------------------------------
 # 0) Ensure the Maven distribution is unpacked (provides boot/ + lib/ for the image classpath).
 # ---------------------------------------------------------------------------------------------------
@@ -383,8 +406,13 @@ echo ">>> Building native image ..."
 #  org.codehaus.plexus.classworlds.launcher.Launcher \
 #  nmvn-native
 
+# Heap for the builder JVM. Default 80% of machine RAM; override if the box is shared or larger.
+# Analysis of embabel (kotlin+spotbugs+site fully reflected) OOMs around 50GiB — prefer skipping
+# bulk plugins / bulk reflection over only raising this.
+NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
+
 native-image \
-  -J-XX:MaxRAMPercentage=80.0 \
+  -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE" \
   -classpath "$CLASSPATH" \
   -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \
   -Dnmvn.prebuilt.unlinkable="$WORK/unlinkable.txt" \
