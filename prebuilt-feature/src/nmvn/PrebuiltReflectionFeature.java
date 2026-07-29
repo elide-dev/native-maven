@@ -155,23 +155,31 @@ public final class PrebuiltReflectionFeature implements Feature {
                 || pluginKey.endsWith(":maven-failsafe-plugin");
     }
 
-    /** Classes Guice/Sisu must construct or that are known plugin-internal components. */
+    /**
+     * Classes Guice/Sisu must construct or inject into. Includes the full <b>superclass chain</b>
+     * of each mojo/component: Sisu field injection walks {@code BeanPropertyField} on the concrete
+     * type <em>and</em> parents (e.g. {@code AbstractSurefireMojo.locationManager}). Under bulk
+     * mode, only these types get methods/fields registered — if parents are missing, Guice fails
+     * with {@code MissingReflectionRegistrationError} on the parent field.
+     */
     private static Set<Class<?>> diRoots(PrebuiltPluginRealms.Prebuilt prebuilt) {
         Set<Class<?>> roots = new HashSet<>();
         for (MojoDescriptor mojo : prebuilt.descriptor.getMojos()) {
-            Class<?> impl = mojo.getImplementationClass();
-            if (impl != null) {
-                roots.add(impl);
-            }
+            addWithSuperclasses(roots, mojo.getImplementationClass());
         }
         for (ComponentDescriptor<?> component : prebuilt.components) {
-            Class<?> impl = component.getImplementationClass();
-            if (impl != null) {
-                roots.add(impl);
-            }
+            addWithSuperclasses(roots, component.getImplementationClass());
         }
-        roots.addAll(prebuilt.indexedClasses);
+        for (Class<?> indexed : prebuilt.indexedClasses) {
+            addWithSuperclasses(roots, indexed);
+        }
         return roots;
+    }
+
+    private static void addWithSuperclasses(Set<Class<?>> roots, Class<?> type) {
+        for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
+            roots.add(c);
+        }
     }
 
     /**
