@@ -1,0 +1,102 @@
+{
+  "_comment": [
+    "Demand model for the nmvn prebuilt-binary catalog: language=java, Spring Boot 4.1.0.",
+    "",
+    "A FEATURE is a set of plugin realms that appear together and are triggered by the same",
+    "start.spring.io dependency. Features are the unit of catalog variation: every generated pom",
+    "needs the core set plus some subset of these six, and nothing else. Derived by generating a pom",
+    "for all 205 initializr dependencies plus a native-x-dep and kotlin-x-dep interaction sweep, then",
+    "running build-nmvn-for-pom.sh --plugins-only on every pom whose <build><plugins> differed.",
+    "",
+    "closureMb is the resolved transitive jar closure (maven-dependency-plugin:copy-dependencies on a",
+    "probe pom), which is what a baked realm has to carry. imageMbPerClosureMb converts that to image",
+    "growth and is the ONE number here that is a guess -- see calibration note in plan_catalog.py.",
+    "",
+    "prior is P(a generated project needs this feature). These are ESTIMATES. Measured 2026-07-29:",
+    "the exact feature grouping they produce is NOT trustworthy (plan_catalog.py --sensitivity: the",
+    "k=4 partition survives 4x prior perturbation in only 2/200 draws), but the optimum is flat, so",
+    "that does not matter -- plan_catalog.py --regret puts the cost of these guesses at a mean 4.9MB",
+    "against a 262MB saving over one universal image. Do NOT wait for telemetry to build the catalog;",
+    "do NOT read meaning into which features share a binary."
+  ],
+
+  "bootVersion": "4.1.0",
+  "language": "java",
+
+  "baseImageMb": 852,
+  "imageMbPerClosureMb": 2.0,
+
+  "core": [
+    "org.springframework.boot:spring-boot-maven-plugin:4.1.0",
+    "org.apache.maven.plugins:maven-clean-plugin:3.5.0",
+    "org.apache.maven.plugins:maven-compiler-plugin:3.15.0",
+    "org.apache.maven.plugins:maven-surefire-plugin:3.5.6",
+    "org.apache.maven.plugins:maven-jar-plugin:3.5.0",
+    "org.apache.maven.plugins:maven-war-plugin:3.5.1",
+    "org.apache.maven.plugins:maven-install-plugin:3.1.4",
+    "org.apache.maven.plugins:maven-resources-plugin:3.5.0",
+    "org.apache.maven.plugins:maven-deploy-plugin:3.1.4",
+    "org.apache.maven.plugins:maven-site-plugin:3.21.0"
+  ],
+
+  "_core_comment": [
+    "Both maven-jar-plugin and maven-war-plugin are in core, so <packaging> is NOT a catalog axis:",
+    "war-plugin is ~1 MB and carrying both everywhere is cheaper than doubling the catalog.",
+    "maven-compiler-plugin being in core is what makes lombok and configuration-processor free --",
+    "they add only an explicit compiler-plugin block, and annotationProcessorPaths are not plugin",
+    "<dependencies>, so PrebuiltPluginRealms.match() sees an unchanged dependency key."
+  ],
+
+  "features": {
+    "codegen-dgs": {
+      "triggers": ["dgs-codegen"],
+      "plugins": [
+        "io.github.deweyjose:graphqlcodegen-maven-plugin:1.61.5",
+        "org.codehaus.mojo:build-helper-maven-plugin:3.6.1"
+      ],
+      "closureMb": 16,
+      "prior": 0.01
+    },
+    "grpc": {
+      "triggers": ["spring-grpc-client", "spring-grpc-server"],
+      "plugins": ["io.github.ascopes:protobuf-maven-plugin:5.1.4"],
+      "closureMb": 5,
+      "prior": 0.03
+    },
+    "sbom": {
+      "triggers": ["sbom-cyclone-dx"],
+      "plugins": ["org.cyclonedx:cyclonedx-maven-plugin:2.9.1"],
+      "closureMb": 10,
+      "prior": 0.05
+    },
+    "restdocs": {
+      "triggers": ["restdocs"],
+      "plugins": [
+        "org.asciidoctor:asciidoctor-maven-plugin:2.2.1|org.springframework.restdocs:spring-restdocs-asciidoctor:4.0.1:jar::compile"
+      ],
+      "closureMb": 39,
+      "prior": 0.05
+    },
+    "vaadin": {
+      "triggers": ["vaadin"],
+      "plugins": ["com.vaadin:vaadin-maven-plugin:25.2.4"],
+      "closureMb": 57,
+      "prior": 0.02
+    },
+    "jpa-native": {
+      "_comment": "hibernate-maven-plugin appears ONLY for native + data-jpa together; data-jpa alone does not add it.",
+      "triggers": ["native+data-jpa"],
+      "plugins": ["org.hibernate.orm:hibernate-maven-plugin:7.4.1.Final"],
+      "closureMb": 40,
+      "prior": 0.04
+    }
+  },
+
+  "unbakeable": {
+    "_comment": "Both carry <extensions>true</extensions>, which gets a structurally different realm; build-nmvn-for-pom.sh skips them by design. They are excluded from feature detection so they never influence selection.",
+    "plugins": [
+      "org.graalvm.buildtools:native-maven-plugin",
+      "org.springframework.cloud:spring-cloud-contract-maven-plugin"
+    ]
+  }
+}
