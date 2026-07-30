@@ -92,14 +92,18 @@ public class PrebuiltPluginRealmCache extends DefaultPluginRealmCache {
         // realm was baked with — they add jars, override versions and apply exclusions, so a
         // different set means a different realm (stock DefaultPluginRealmCache.createKey includes
         // them in its key for the same reason). Mismatch falls through to dynamic resolution.
-        PrebuiltPluginRealms.Prebuilt prebuilt = PrebuiltPluginRealms.match(
+        // Descriptor cache already logs the route; log here too so realm-only lookups still show up
+        // (once-per-plugin-id via PrebuiltRoutingLog).
+        PrebuiltPluginRealms.Route route = PrebuiltPluginRealms.route(
                 plugin.getGroupId(),
                 plugin.getArtifactId(),
                 plugin.getVersion(),
                 PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()));
-        if (prebuilt != null) {
-            return new PrebuiltKey(prebuilt, plugin);
+        if (route.isBaked()) {
+            PrebuiltRoutingLog.baked(plugin);
+            return new PrebuiltKey(route.prebuilt, plugin);
         }
+        PrebuiltRoutingLog.dynamic(plugin, route.dynamicReason);
         return super.createKey(plugin, parent, foreignImports, dependencyFilter, repositories, session);
     }
 

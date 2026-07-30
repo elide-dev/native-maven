@@ -61,16 +61,20 @@ public class PrebuiltPluginDescriptorCache extends DefaultPluginDescriptorCache 
         // the realm was baked with. <extensions>true</extensions> stays dynamic unconditionally:
         // extension plugins get a structurally different realm — different imports and visibility —
         // not merely different contents.
-        if (!plugin.isExtensions()) {
-            PrebuiltPluginRealms.Prebuilt prebuilt = PrebuiltPluginRealms.match(
-                    plugin.getGroupId(),
-                    plugin.getArtifactId(),
-                    plugin.getVersion(),
-                    PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()));
-            if (prebuilt != null) {
-                return new PrebuiltKey(prebuilt);
-            }
+        if (plugin.isExtensions()) {
+            PrebuiltRoutingLog.dynamic(plugin, "extensions=true (not bakeable)");
+            return super.createKey(plugin, repositories, session);
         }
+        PrebuiltPluginRealms.Route route = PrebuiltPluginRealms.route(
+                plugin.getGroupId(),
+                plugin.getArtifactId(),
+                plugin.getVersion(),
+                PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()));
+        if (route.isBaked()) {
+            PrebuiltRoutingLog.baked(plugin);
+            return new PrebuiltKey(route.prebuilt);
+        }
+        PrebuiltRoutingLog.dynamic(plugin, route.dynamicReason);
         return super.createKey(plugin, repositories, session);
     }
 

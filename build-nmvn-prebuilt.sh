@@ -326,6 +326,7 @@ javac --release 17 -cp "$CLASSPATH" -d "$FEATURE_OUT" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginDescriptorCache.java" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginRealmCache.java" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginConfigurationModule.java" \
+  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltRoutingLog.java" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionDemand.java"
 javac --add-modules org.graalvm.nativeimage -cp "$CLASSPATH:$FEATURE_OUT" -d "$FEATURE_OUT" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionFeature.java" \

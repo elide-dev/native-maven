@@ -1170,20 +1170,53 @@ public final class PrebuiltPluginRealms {
      * stand in for a plugin whose realm Maven would have built differently. Any doubt falls back to
      * dynamic resolution, which is always correct (just slower), so the comparison errs strict.
      */
+    /**
+     * Outcome of prebuilt routing for one plugin request. {@link #prebuilt} non-null means use the
+     * baked realm/descriptor; otherwise fall back to dynamic resolution for {@link #dynamicReason}.
+     */
+    public static final class Route {
+        public final Prebuilt prebuilt;
+        /** Null when baked; otherwise a short reason for dynamic fallback. */
+        public final String dynamicReason;
+
+        Route(Prebuilt prebuilt, String dynamicReason) {
+            this.prebuilt = prebuilt;
+            this.dynamicReason = dynamicReason;
+        }
+
+        public boolean isBaked() {
+            return prebuilt != null;
+        }
+    }
+
     public static Prebuilt match(
+            String groupId, String artifactId, String requestedVersion, String requestedDependencyKey) {
+        return route(groupId, artifactId, requestedVersion, requestedDependencyKey).prebuilt;
+    }
+
+    /**
+     * Same decision as {@link #match}, but keeps the reason when falling back to dynamic resolution
+     * (for runtime logging of baked vs dynamic plugins).
+     */
+    public static Route route(
             String groupId, String artifactId, String requestedVersion, String requestedDependencyKey) {
         Prebuilt prebuilt = BY_KEY.get(groupId + ":" + artifactId);
         if (prebuilt == null) {
-            return null;
+            if (BY_KEY.isEmpty()) {
+                return new Route(null, "no prebuilt plugins in this image");
+            }
+            return new Route(null, "not baked in this image");
         }
         String baked = prebuilt.descriptor.getVersion();
         if (requestedVersion != null && baked != null && !requestedVersion.equals(baked)) {
-            return null;
+            return new Route(
+                    null, "version mismatch (requested " + requestedVersion + ", baked " + baked + ")");
         }
-        if (!prebuilt.dependencyKey.equals(requestedDependencyKey == null ? "" : requestedDependencyKey)) {
-            return null;
+        String reqDeps = requestedDependencyKey == null ? "" : requestedDependencyKey;
+        if (!prebuilt.dependencyKey.equals(reqDeps)) {
+            return new Route(null, "per-plugin <dependencies> differ from baked set");
         }
-        return prebuilt;
+        return new Route(prebuilt, null);
     }
 
     /**
