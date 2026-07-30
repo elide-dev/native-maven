@@ -1,5 +1,8 @@
 package nmvn;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -7,8 +10,13 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.net.URI;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -17,6 +25,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
 import org.apache.maven.plugin.descriptor.Parameter;
@@ -30,6 +40,7 @@ import org.codehaus.plexus.component.repository.ComponentRequirement;
  *   <li>Sisu/Guice: {@code @Inject} / {@code @Requirement} constructors, fields, methods</li>
  *   <li>Mojo parameters from {@code plugin.xml}: matching fields/setters and nested config beans</li>
  *   <li>Component/sisu-index seeds and their superclass chains</li>
+ *   <li>Reflective factories: {@code META-INF/services/*}, commons-logging LogFactory discovery</li>
  * </ul>
  *
  * <p>Everything else in a fat realm (kotlin/hibernate/vaadin jars, …) stays off the reflection
@@ -37,6 +48,22 @@ import org.codehaus.plexus.component.repository.ComponentRequirement;
  * reflection roots for native-image analysis.
  */
 public final class PrebuiltReflectionDemand {
+
+    /**
+     * Types commons-logging / Spring discover via Class.forName + newInstance (no @Inject). Present
+     * in spring-boot-maven-plugin's realm through spring-core → commons-logging.
+     */
+    private static final String[] COMMONS_LOGGING_FACTORIES = {
+        "org.apache.commons.logging.impl.LogFactoryImpl",
+        "org.apache.commons.logging.impl.Slf4jLogFactory",
+        "org.apache.commons.logging.impl.Log4jApiLogFactory",
+        "org.apache.commons.logging.impl.Log4JLogger",
+        "org.apache.commons.logging.impl.Jdk14Logger",
+        "org.apache.commons.logging.impl.Jdk13LumberjackLogger",
+        "org.apache.commons.logging.impl.SimpleLog",
+        "org.apache.commons.logging.impl.NoOpLog",
+        "org.apache.commons.logging.impl.WeakHashtable",
+    };
 
     /** Per-class members that must be registered for reflective access. */
     public static final class Surface {
@@ -94,6 +121,103 @@ public final class PrebuiltReflectionDemand {
             demandInstantiable(indexed);
             for (Class<?> c = indexed; c != null && c != Object.class; c = c.getSuperclass()) {
                 scanInjectPoints(c);
+            }
+        }
+        // Reflective Class.forName + ctor.newInstance factories (not visible via @Inject).
+        seedKnownReflectiveFactories();
+        seedServiceLoaderImplementations();
+    }
+
+    /** commons-logging LogFactory static init: Class.forName(LogFactoryImpl).newInstance(). */
+    private void seedKnownReflectiveFactories() {
+        boolean loggingPresent = realmClasses.keySet().stream()
+                .anyMatch(n -> n.startsWith("org.apache.commons.logging."));
+        // Always try these when the plugin realm has spring/commons-logging, and also when they
+        // resolve from the image classpath (Preserve package=org.apache.commons.logging.impl.*).
+        for (String name : COMMONS_LOGGING_FACTORIES) {
+            Class<?> c = realmClasses.get(name);
+            if (c == null) {
+                c = resolve(name);
+            }
+            if (c != null && (loggingPresent || isInRealm(c) || name.contains("commons.logging"))) {
+                enqueue(c);
+                demandInstantiable(c);
+            }
+        }
+        // Unconditionally demand LogFactoryImpl if it exists anywhere — spring-boot repackage hits
+        // this on first Spring JCL/commons-logging use inside the prebuilt realm.
+        Class<?> logFactoryImpl = realmClasses.get("org.apache.commons.logging.impl.LogFactoryImpl");
+        if (logFactoryImpl == null) {
+            logFactoryImpl = resolve("org.apache.commons.logging.impl.LogFactoryImpl");
+        }
+        if (logFactoryImpl != null) {
+            enqueue(logFactoryImpl);
+            demandInstantiable(logFactoryImpl);
+        }
+    }
+
+    /**
+     * Register every type listed under {@code META-INF/services/} in realm jars — Jackson modules,
+     * HTTP clients, etc. use ServiceLoader / equivalent reflective instantiation.
+     */
+    private void seedServiceLoaderImplementations() {
+        Set<URI> jarUris = new LinkedHashSet<>();
+        for (Class<?> c : realmClasses.values()) {
+            try {
+                if (c.getProtectionDomain() == null || c.getProtectionDomain().getCodeSource() == null) {
+                    continue;
+                }
+                URL location = c.getProtectionDomain().getCodeSource().getLocation();
+                if (location != null) {
+                    jarUris.add(location.toURI());
+                }
+            } catch (Throwable ignored) {
+                // ignore incomplete protection domains
+            }
+        }
+        for (URI uri : jarUris) {
+            try {
+                if ("file".equals(uri.getScheme()) && uri.getPath() != null && uri.getPath().endsWith(".jar")) {
+                    try (JarFile jar = new JarFile(Path.of(uri).toFile())) {
+                        Enumeration<JarEntry> entries = jar.entries();
+                        while (entries.hasMoreElements()) {
+                            JarEntry entry = entries.nextElement();
+                            String name = entry.getName();
+                            if (!name.startsWith("META-INF/services/") || name.endsWith("/")) {
+                                continue;
+                            }
+                            try (InputStream in = jar.getInputStream(entry);
+                                    BufferedReader reader =
+                                            new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                                demandServiceLines(reader);
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // skip unreadable jars
+            }
+        }
+    }
+
+    private void demandServiceLines(BufferedReader reader) throws java.io.IOException {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            line = line.trim();
+            int hash = line.indexOf('#');
+            if (hash >= 0) {
+                line = line.substring(0, hash).trim();
+            }
+            if (line.isEmpty()) {
+                continue;
+            }
+            Class<?> c = realmClasses.get(line);
+            if (c == null) {
+                c = resolve(line);
+            }
+            if (c != null) {
+                enqueue(c);
+                demandInstantiable(c);
             }
         }
     }
