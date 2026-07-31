@@ -78,7 +78,12 @@ public final class PrebuiltReflectionFeature implements Feature {
         registerCoreResources(access);
 
         PrebuiltPluginRealms.all().forEach((key, prebuilt) -> {
-            Map<Class<?>, PrebuiltReflectionDemand.Surface> demand = PrebuiltReflectionDemand.compute(prebuilt);
+            Map<Class<?>, PrebuiltReflectionDemand.Surface> demand =
+                    new java.util.LinkedHashMap<>(PrebuiltReflectionDemand.compute(prebuilt));
+            // Packages that use Class.forName / ServiceLoader / heavy self-reflection outside DI.
+            // Byte Buddy (Hibernate enhance) fails with BindingPriority$Resolver size=0 without this.
+            int infra = expandInfrastructureSurfaces(prebuilt, demand);
+
             int types = 0;
             int ctors = 0;
             int fields = 0;
@@ -93,43 +98,11 @@ public final class PrebuiltReflectionFeature implements Feature {
                     continue;
                 }
                 try {
-                    RuntimeReflection.register(c);
+                    int[] counts = registerSurface(c, surface);
                     types++;
-
-                    if (surface.allMembers) {
-                        Constructor<?>[] allCtors = c.getDeclaredConstructors();
-                        if (allCtors.length > 0) {
-                            RuntimeReflection.register(allCtors);
-                            ctors += allCtors.length;
-                        }
-                        Method[] allMethods = c.getDeclaredMethods();
-                        if (allMethods.length > 0) {
-                            RuntimeReflection.register(allMethods);
-                            methods += allMethods.length;
-                        }
-                        Field[] allFields = c.getDeclaredFields();
-                        if (allFields.length > 0) {
-                            RuntimeReflection.register(allFields);
-                            fields += allFields.length;
-                        }
-                        continue;
-                    }
-
-                    if (!surface.constructors.isEmpty()) {
-                        Constructor<?>[] arr = surface.constructors.toArray(Constructor<?>[]::new);
-                        RuntimeReflection.register(arr);
-                        ctors += arr.length;
-                    }
-                    if (!surface.fields.isEmpty()) {
-                        Field[] arr = surface.fields.toArray(Field[]::new);
-                        RuntimeReflection.register(arr);
-                        fields += arr.length;
-                    }
-                    if (!surface.methods.isEmpty()) {
-                        Method[] arr = surface.methods.toArray(Method[]::new);
-                        RuntimeReflection.register(arr);
-                        methods += arr.length;
-                    }
+                    ctors += counts[0];
+                    fields += counts[1];
+                    methods += counts[2];
                 } catch (Throwable t) {
                     failed++;
                     System.out.println("nmvn feature: SKIPPED demand type " + c.getName() + " in " + key + ": " + t);
@@ -142,9 +115,123 @@ public final class PrebuiltReflectionFeature implements Feature {
                     + " ctors=" + ctors
                     + " fields=" + fields
                     + " methods=" + methods
+                    + " infraTypes=" + infra
                     + " failed=" + failed);
         });
         System.out.println("nmvn feature: " + PrebuiltPluginRealms.STATUS);
+    }
+
+    /**
+     * Full reflective surface for small-but-critical infrastructure packages present in a realm.
+     * Demand analysis never sees Class.forName / annotation-method introspection these libraries do.
+     */
+    private static int expandInfrastructureSurfaces(
+            PrebuiltPluginRealms.Prebuilt prebuilt, Map<Class<?>, PrebuiltReflectionDemand.Surface> demand) {
+        int n = 0;
+        for (Class<?> c : prebuilt.classes.values()) {
+            if (!isReflectiveInfrastructure(c.getName())) {
+                continue;
+            }
+            PrebuiltReflectionDemand.Surface surface =
+                    demand.computeIfAbsent(c, k -> new PrebuiltReflectionDemand.Surface());
+            surface.allMembers = true;
+            try {
+                for (Constructor<?> ctor : c.getDeclaredConstructors()) {
+                    surface.constructors.add(ctor);
+                }
+            } catch (Throwable ignored) {
+                // incomplete type
+            }
+            n++;
+        }
+        // Image-classpath copies (Preserve / parent loader) for commons-logging factories.
+        for (String name : new String[] {
+            "org.apache.commons.logging.impl.LogFactoryImpl",
+            "org.apache.commons.logging.impl.Slf4jLogFactory",
+            "org.apache.commons.logging.impl.Log4jApiLogFactory",
+            "org.apache.commons.logging.LogFactory"
+        }) {
+            try {
+                Class<?> c = Class.forName(name, false, PrebuiltReflectionFeature.class.getClassLoader());
+                PrebuiltReflectionDemand.Surface surface =
+                        demand.computeIfAbsent(c, k -> new PrebuiltReflectionDemand.Surface());
+                surface.allMembers = true;
+                for (Constructor<?> ctor : c.getDeclaredConstructors()) {
+                    surface.constructors.add(ctor);
+                }
+                n++;
+            } catch (ClassNotFoundException | LinkageError ignored) {
+                // not on image classpath
+            }
+        }
+        return n;
+    }
+
+    private static boolean isReflectiveInfrastructure(String className) {
+        return className.startsWith("org.apache.commons.logging.")
+                // Byte Buddy: Hibernate enhance / bytecode provider static init introspects its own
+                // annotations and methods (BindingPriority$Resolver → size=0 without this).
+                || className.startsWith("net.bytebuddy.")
+                // Hibernate's ByteBuddy integration + SPI glue
+                || className.startsWith("org.hibernate.bytecode.");
+    }
+
+    /** @return int[]{ctors, fields, methods} registered */
+    private static int[] registerSurface(Class<?> c, PrebuiltReflectionDemand.Surface surface) {
+        int ctors = 0;
+        int fields = 0;
+        int methods = 0;
+        RuntimeReflection.register(c);
+        if (PrebuiltReflectionDemand.isReflectivelyInstantiable(c)) {
+            try {
+                RuntimeReflection.registerForReflectiveInstantiation(c);
+            } catch (Throwable ignored) {
+                // not all types / Graal versions
+            }
+        }
+        if (surface.allMembers) {
+            Constructor<?>[] allCtors = c.getDeclaredConstructors();
+            if (allCtors.length > 0) {
+                RuntimeReflection.register(allCtors);
+                ctors += allCtors.length;
+            }
+            Method[] allMethods = c.getDeclaredMethods();
+            if (allMethods.length > 0) {
+                RuntimeReflection.register(allMethods);
+                methods += allMethods.length;
+            }
+            Field[] allFields = c.getDeclaredFields();
+            if (allFields.length > 0) {
+                RuntimeReflection.register(allFields);
+                fields += allFields.length;
+            }
+            // Annotations on methods/fields are read as Class objects by Byte Buddy's description
+            // layer — ensure annotation types themselves are registered.
+            try {
+                for (java.lang.annotation.Annotation a : c.getDeclaredAnnotations()) {
+                    RuntimeReflection.register(a.annotationType());
+                }
+            } catch (Throwable ignored) {
+                // ignore
+            }
+            return new int[] {ctors, fields, methods};
+        }
+        if (!surface.constructors.isEmpty()) {
+            Constructor<?>[] arr = surface.constructors.toArray(Constructor<?>[]::new);
+            RuntimeReflection.register(arr);
+            ctors += arr.length;
+        }
+        if (!surface.fields.isEmpty()) {
+            Field[] arr = surface.fields.toArray(Field[]::new);
+            RuntimeReflection.register(arr);
+            fields += arr.length;
+        }
+        if (!surface.methods.isEmpty()) {
+            Method[] arr = surface.methods.toArray(Method[]::new);
+            RuntimeReflection.register(arr);
+            methods += arr.length;
+        }
+        return new int[] {ctors, fields, methods};
     }
 
     /**
