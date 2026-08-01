@@ -244,7 +244,56 @@ mkdir -p "$WORK"
 EXPORTED_ARTIFACTS=$(unzip -p "$MAVEN_HOME"/lib/maven-core-*.jar META-INF/maven/extension.xml \
   | sed -n 's/.*<exportedArtifact>\(.*\)<\/exportedArtifact>.*/\1/p')
 
-PREBUILT_SPEC=""
+# Platform classpath / jar-list separator for javac/java -cp and for realm jar lists.
+# On Windows Git Bash, Windows javac/java need ';' and drive-letter paths (cygpath -m), not /c/...
+CP_SEP=':'
+WINDOWS_BUILD=false
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|MSYS*|CYGWIN*)
+    CP_SEP=';'
+    WINDOWS_BUILD=true
+    ;;
+esac
+
+# Convert a path for use in a Windows-native -cp list (Git Bash → mixed Windows path).
+to_cp_path() {
+  local p="$1"
+  if $WINDOWS_BUILD && command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$p" 2>/dev/null || printf '%s' "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+# Append one path to CLASSPATH with the correct separator / Windows path form.
+cp_append() {
+  local p
+  p="$(to_cp_path "$1")"
+  if [ -z "$CLASSPATH" ]; then
+    CLASSPATH="$p"
+  else
+    CLASSPATH="${CLASSPATH}${CP_SEP}${p}"
+  fi
+}
+
+# Realm spec: one complete "g:a:v[|deps]=jar${CP_SEP}jar..." line per plugin (never ';' as entry
+# separator — on Windows CP_SEP is ';'). Written via Python so bash cannot mangle paths/`=`.
+SPEC_FILE="$WORK/spec.txt"
+: > "$SPEC_FILE"
+append_spec_line() {
+  # $1 = full line (may contain ';', '\', spaces). Appended as one UTF-8 line.
+  NMVN_SPEC_LINE="$1" NMVN_SPEC_FILE="$SPEC_FILE" python3 - <<'PY'
+import os
+line = os.environ["NMVN_SPEC_LINE"]
+path = os.environ["NMVN_SPEC_FILE"]
+# Normalize Windows paths to forward slashes so nothing treats '\' as escape later.
+line = line.replace("\\", "/")
+with open(path, "a", encoding="utf-8", newline="\n") as f:
+    f.write(line)
+    f.write("\n")
+PY
+}
+
 for ENTRY in "${PLUGINS[@]}"; do
   # Each entry is "groupId:artifactId:version" optionally followed by "|<canonical dependencies>"
   # (see PrebuiltPluginRealms.dependencyKey for the encoding).
@@ -401,20 +450,21 @@ SERPOM
         *kotlinx-serialization*) ;;
         *) continue ;;
       esac
-      case ":$PLUGIN_JARS:" in
-        *":$ser_jar:"*) ;;
-        *) PLUGIN_JARS="$PLUGIN_JARS:$ser_jar"
+      case "${CP_SEP}${PLUGIN_JARS}${CP_SEP}" in
+        *"${CP_SEP}${ser_jar}${CP_SEP}"*) ;;
+        *) PLUGIN_JARS="${PLUGIN_JARS}${PLUGIN_JARS:+$CP_SEP}${ser_jar}"
            echo "    + $ser_jar" ;;
       esac
-    done <<< "$(tr ':' '\n' < "$SER_CP")"
+    done <<< "$(tr "$CP_SEP" '\n' < "$SER_CP")"
   fi
 
   echo ">>> $A realm jars: $PLUGIN_JARS"
 
-  # The spec consumed by PrebuiltPluginRealms (';'-separated entries, each
-  # g:a:v[|canonical-dependencies]=jar1:jar2:...). The dependency key travels with the entry so the
-  # runtime can require an exact match before serving the baked realm.
-  PREBUILT_SPEC="${PREBUILT_SPEC:+$PREBUILT_SPEC;}$GAV${DEP_KEY:+|$DEP_KEY}=$PLUGIN_JARS"
+  # One complete realm line per plugin (newline-separated file). See append_spec_line.
+  LINE="$GAV"
+  [ -n "$DEP_KEY" ] && LINE="$LINE|$DEP_KEY"
+  LINE="$LINE=$PLUGIN_JARS"
+  append_spec_line "$LINE"
 done
 
 # ---------------------------------------------------------------------------------------------------
@@ -424,8 +474,15 @@ done
 # ---------------------------------------------------------------------------------------------------
 CLASSPATH=""
 for jar in "$MAVEN_HOME"/boot/*.jar "$MAVEN_HOME"/lib/*.jar; do
-  CLASSPATH="${CLASSPATH:+$CLASSPATH:}$jar"
+  [ -f "$jar" ] || continue
+  cp_append "$jar"
 done
+if [ -z "$CLASSPATH" ]; then
+  echo "Error: no jars under $MAVEN_HOME/boot or $MAVEN_HOME/lib — is the Maven dist complete?"
+  ls -la "$MAVEN_HOME" 2>/dev/null || true
+  exit 1
+fi
+echo ">>> Image/javac classpath: $(echo "$CLASSPATH" | tr "$CP_SEP" '\n' | wc -l | tr -d ' ') jars (sep='$CP_SEP')"
 
 # ---------------------------------------------------------------------------------------------------
 # 2b) Compile the build-time reflection Feature. JSON reachability metadata cannot register the
@@ -452,19 +509,20 @@ javac --release 17 -cp "$CLASSPATH" -d "$FEATURE_OUT" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginConfigurationModule.java" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltRoutingLog.java" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionDemand.java"
-javac --add-modules org.graalvm.nativeimage -cp "$CLASSPATH:$FEATURE_OUT" -d "$FEATURE_OUT" \
+FEATURE_CP="$(to_cp_path "$FEATURE_OUT")"
+javac --add-modules org.graalvm.nativeimage -cp "${CLASSPATH}${CP_SEP}${FEATURE_CP}" -d "$FEATURE_OUT" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionFeature.java" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/NmvnLauncher.java"
 # No --release here: this tool uses java.lang.classfile (JDK 24+) and only ever runs on the
 # builder JDK, so it has no 17-compatibility obligation like the runtime classes above.
-javac -cp "$CLASSPATH:$FEATURE_OUT" -d "$TOOLS_OUT" \
+javac -cp "${CLASSPATH}${CP_SEP}${FEATURE_CP}" -d "$TOOLS_OUT" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/SanitizeRealmJars.java"
 # Sidecar jar (sisu index + nmvn classes) lives under NMVN_WORK_DIR — not written into the Maven
 # dist tree — and is appended to the image classpath like any other lib jar.
 cp -R "$SCRIPT_DIR/prebuilt-feature/resources/." "$FEATURE_OUT/"
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
 (cd "$FEATURE_OUT" && jar cf "$SIDECAR_JAR" nmvn META-INF)
-CLASSPATH="$CLASSPATH:$SIDECAR_JAR"
+cp_append "$SIDECAR_JAR"
 
 # ---------------------------------------------------------------------------------------------------
 # 3) Sanitize realm jars: strip EnclosingMethod/Signature attributes whose reflective parsing
@@ -473,28 +531,28 @@ CLASSPATH="$CLASSPATH:$SIDECAR_JAR"
 #    already throw identically on JVM Maven, so stripping is behavior-preserving. Jars are
 #    rewritten into $WORK/sanitized (originals in ~/.m2 untouched) and the spec repointed.
 # ---------------------------------------------------------------------------------------------------
-echo "$PREBUILT_SPEC" > "$WORK/spec.txt"
+echo ">>> Realm spec ($SPEC_FILE):"
+wc -l "$SPEC_FILE" | awk '{print ">>>   " $1 " plugin realm(s)"}'
 echo ">>> Sanitizing realm jars + link probe ..."
 # JVMCI flags: the tool runs the SAME ResolvedJavaType.link() SVM runs on registered classes,
 # against an exact replica of each baked realm; failures land in unlinkable.txt and are dropped
 # from the baked maps (see PrebuiltPluginRealms.loadAllClasses). Runs in this throwaway JVM
 # because JVMCI touched from image-baked code leaks the JVMCIRuntime singleton into the heap.
-PREBUILT_SPEC=$(java \
+# Write sanitized spec to a file (not stdout→shell) so newlines / Windows paths are preserved.
+TOOLS_CP="$(to_cp_path "$TOOLS_OUT")"
+java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
-  -cp "$CLASSPATH:$TOOLS_OUT" \
-  nmvn.SanitizeRealmJars "$WORK/spec.txt" "$WORK/sanitized" "$WORK/unlinkable.txt")
-echo "$PREBUILT_SPEC" > "$WORK/spec.txt"
+  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}" \
+  nmvn.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
 
 # ---------------------------------------------------------------------------------------------------
 # 4) Build the image.
 #    Key prebuilt flags:
-#      -Dnmvn.prebuilt.plugins=...   feeds the realm spec to PrebuiltPluginRealms' static initializer
+#      -Dnmvn.prebuilt.pluginsFile=... feeds newline-separated realm specs to PrebuiltPluginRealms
 #      --initialize-at-build-time=PrebuiltPluginRealms,...classworlds
 #                                    runs that initializer at build time and snapshots the realms
-#      -H:IncludeResources=...clean/.* embeds any runtime resources the mojo reads from its jar
-#                                    (the frozen realm cannot open the jar at runtime)
 # ---------------------------------------------------------------------------------------------------
 echo ">>> Building native image ..."
 #native-image \
@@ -537,10 +595,12 @@ echo ">>> Building native image ..."
 # bulk plugins / bulk reflection over only raising this.
 NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
 
+# pluginsFile (not inline -D) so Windows jar paths using ';' do not collide with an entry
+# separator, and so the huge multi-line spec is not jammed onto the command line.
 run_native_image \
   -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE" \
   -classpath "$CLASSPATH" \
-  -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \
+  -Dnmvn.prebuilt.pluginsFile="$SPEC_FILE" \
   -Dnmvn.prebuilt.unlinkable="$WORK/unlinkable.txt" \
   -Dguice_bytecode_gen_option=DISABLED \
   -march=native \

@@ -73,10 +73,13 @@ import org.codehaus.plexus.component.repository.ComponentDescriptor;
  * ORDER MATTERS when pinning: sisu's {@code ComponentDescriptor.setRealm(...)} nulls the cached
  * implementation class, so {@code setRealm} must precede {@code setImplementationClass}.
  *
- * <p><b>Configuration.</b> {@code -Dnmvn.prebuilt.plugins} is a {@code ';'}-separated list of
+ * <p><b>Configuration.</b> {@code -Dnmvn.prebuilt.plugins} (or {@code -Dnmvn.prebuilt.pluginsFile})
+ * is a <em>newline</em>-separated list of
  * {@code groupId:artifactId:version=jar1{File.pathSeparator}jar2...} entries (first jar = plugin
- * artifact, rest = resolved runtime classpath). When absent (normal JVM run, tests) the registry is
- * empty and everything falls back to stock dynamic resolution.
+ * artifact, rest = resolved runtime classpath). Newlines are required because on Windows
+ * {@code File.pathSeparator} is {@code ';'} — using {@code ';'} as the entry separator would split
+ * jar paths. When absent (normal JVM run, tests) the registry is empty and everything falls back
+ * to stock dynamic resolution.
  */
 public final class PrebuiltPluginRealms {
 
@@ -371,17 +374,14 @@ public final class PrebuiltPluginRealms {
     private PrebuiltPluginRealms() {}
 
     private static String buildAll(ClassWorld world, ClassRealm core) throws Exception {
-        String spec = System.getProperty("nmvn.prebuilt.plugins");
+        String spec = loadPluginsSpec();
         if (spec == null || spec.isBlank()) {
             return "no nmvn.prebuilt.plugins set — registry empty";
         }
 
         Map<String, Set<String>> unlinkableAll = loadUnlinkable();
         StringBuilder report = new StringBuilder("prebuilt: ");
-        for (String entry : spec.split(";")) {
-            if (entry.isBlank()) {
-                continue;
-            }
+        for (String entry : splitPluginEntries(spec)) {
             int eq = entry.indexOf('=');
             if (eq < 0) {
                 throw new IllegalArgumentException("Malformed nmvn.prebuilt.plugins entry: " + entry);
@@ -688,7 +688,7 @@ public final class PrebuiltPluginRealms {
     }
 
     /** Prefix marking a reference name that can never be satisfied (not a legal binary name). */
-    private static final String POISON = " unreflectable:";
+    private static final String POISON = "unreflectable:";
 
     /**
      * Is a referenced type name unsatisfiable in the baked realm? Cheap set checks first, the JVM
@@ -1158,6 +1158,49 @@ public final class PrebuiltPluginRealms {
     /** @return the baked {@code plexus.core} realm, or {@code null} if init failed. */
     public static ClassRealm coreRealm() {
         return CORE_REALM;
+    }
+
+
+    /**
+     * Load the prebuilt plugins spec from {@code -Dnmvn.prebuilt.pluginsFile} (preferred; avoids
+     * huge / multiline {@code -D} values on Windows) or {@code -Dnmvn.prebuilt.plugins}.
+     */
+    private static String loadPluginsSpec() {
+        String file = System.getProperty("nmvn.prebuilt.pluginsFile");
+        if (file != null && !file.isBlank()) {
+            try {
+                return java.nio.file.Files.readString(java.nio.file.Path.of(file));
+            } catch (Exception e) {
+                throw new IllegalStateException("Cannot read nmvn.prebuilt.pluginsFile=" + file, e);
+            }
+        }
+        return System.getProperty("nmvn.prebuilt.plugins");
+    }
+
+    /**
+     * Split realm entries on newlines. On Unix, also accept legacy {@code ';'} entry separators
+     * when pathSeparator is not {@code ';'} (Windows uses {@code ';'} for jar lists).
+     */
+    private static java.util.List<String> splitPluginEntries(String spec) {
+        java.util.List<String> entries = new java.util.ArrayList<>();
+        for (String line : spec.split("\\R")) {
+            String t = line.trim();
+            if (!t.isEmpty()) {
+                entries.add(t);
+            }
+        }
+        if (!entries.isEmpty()) {
+            return entries;
+        }
+        if (java.io.File.pathSeparatorChar != ';') {
+            for (String part : spec.split(";")) {
+                String t = part.trim();
+                if (!t.isEmpty()) {
+                    entries.add(t);
+                }
+            }
+        }
+        return entries;
     }
 
     /** Separates the GAV from the canonical dependency key inside one {@code nmvn.prebuilt.plugins} entry. */

@@ -55,17 +55,27 @@ import java.util.jar.JarOutputStream;
  * ("JVMCIRuntime should not appear in the image").
  *
  * <p>Usage: {@code java -XX:+EnableJVMCI --add-exports... nmvn.SanitizeRealmJars <spec-file>
- * <out-dir> <unlinkable-out>} — reads the ';'-separated {@code g:a:v=jar:jar:...} realm spec,
- * rewrites only the jars containing broken classes (into out-dir, sources never touched), prints
- * the rewritten spec to stdout (logs go to stderr), and writes {@code g:a:v<TAB>className} lines
- * for link-probe failures.
+ * <out-dir> <unlinkable-out> [spec-out]} — reads a newline-separated
+ * {@code g:a:v=jar{pathSep}jar...} realm spec (entry separator is newline, NOT {@code ';'},
+ * because on Windows {@link File#pathSeparator} is {@code ';'} and would split jar paths
+ * mid-entry). Rewrites only the jars containing broken classes (into out-dir, sources never
+ * touched). Writes the rewritten spec to {@code spec-out} if given, otherwise stdout (logs go to
+ * stderr), and writes {@code g:a:v<TAB>className} lines for link-probe failures.
  */
 public final class SanitizeRealmJars {
 
+    /**
+     * Separates one plugin realm entry from the next. Must not be {@link File#pathSeparatorChar}
+     * (on Windows that is {@code ';'}, which also joins jar paths).
+     */
+    static final String ENTRY_SEPARATOR = "\n";
+
     public static void main(String[] args) throws Exception {
-        String spec = Files.readString(Path.of(args[0])).trim();
+        Path specIn = Path.of(args[0]);
+        String spec = Files.readString(specIn).trim();
         Path outDir = Path.of(args[1]);
         Path unlinkableOut = Path.of(args[2]);
+        Path specOut = args.length > 3 ? Path.of(args[3]) : null;
         Files.createDirectories(outDir);
         List<String> outEntries = new ArrayList<>();
         List<String> unlinkable = new ArrayList<>();
@@ -73,13 +83,27 @@ public final class SanitizeRealmJars {
         int outIndex = 0;
         int realmIndex = 0;
         org.codehaus.plexus.classworlds.ClassWorld world = new org.codehaus.plexus.classworlds.ClassWorld();
-        for (String entry : spec.split(";")) {
+        for (String entry : splitEntries(spec)) {
             int eq = entry.indexOf('=');
+            if (eq < 0) {
+                throw new IllegalArgumentException(
+                        "Malformed prebuilt realm entry (missing '='): " + entry
+                                + " — on Windows jar lists use ';'; each realm must be on its own line");
+            }
             String gav = entry.substring(0, eq);
             String[] jars = entry.substring(eq + 1).split(File.pathSeparator);
-            URL[] urls = new URL[jars.length];
-            for (int i = 0; i < jars.length; i++) {
-                urls[i] = Path.of(jars[i]).toUri().toURL();
+            List<String> jarList = new ArrayList<>();
+            for (String j : jars) {
+                if (!j.isBlank()) {
+                    jarList.add(j);
+                }
+            }
+            if (jarList.isEmpty()) {
+                throw new IllegalArgumentException("Malformed prebuilt realm entry (no jars): " + entry);
+            }
+            URL[] urls = new URL[jarList.size()];
+            for (int i = 0; i < jarList.size(); i++) {
+                urls[i] = Path.of(jarList.get(i)).toUri().toURL();
             }
             List<String> realmJars = new ArrayList<>();
             // Isolated probe loader (platform parent — NOT the app loader, whose classpath holds
@@ -87,7 +111,7 @@ public final class SanitizeRealmJars {
             // version-mixing this pipeline exists to avoid): a broken attribute is only real if
             // it fails against the jar's own consistent classes.
             try (URLClassLoader probeLoader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
-                for (String jarPath : jars) {
+                for (String jarPath : jarList) {
                     Set<String> broken = brokenEntries(jarPath, probeLoader);
                     if (broken.isEmpty()) {
                         realmJars.add(jarPath);
@@ -105,7 +129,41 @@ public final class SanitizeRealmJars {
         }
         Files.write(unlinkableOut, unlinkable);
         System.err.println("sanitize: link probe wrote " + unlinkable.size() + " unlinkable classes to " + unlinkableOut);
-        System.out.println(String.join(";", outEntries));
+        String rewritten = String.join(ENTRY_SEPARATOR, outEntries);
+        if (!outEntries.isEmpty()) {
+            rewritten = rewritten + ENTRY_SEPARATOR;
+        }
+        if (specOut != null) {
+            Files.writeString(specOut, rewritten);
+            System.err.println("sanitize: wrote rewritten spec (" + outEntries.size() + " realms) to " + specOut);
+        } else {
+            System.out.print(rewritten);
+        }
+    }
+
+    /** Split realm entries on newlines; also accept legacy ';' only when pathSeparator is not ';'. */
+    static List<String> splitEntries(String spec) {
+        List<String> entries = new ArrayList<>();
+        // Prefer line-based (portable). Trim each line; skip blanks.
+        for (String line : spec.split("\\R")) {
+            String t = line.trim();
+            if (!t.isEmpty()) {
+                entries.add(t);
+            }
+        }
+        if (!entries.isEmpty()) {
+            return entries;
+        }
+        // Empty after line split: fall back to legacy ';' on Unix only.
+        if (File.pathSeparatorChar != ';') {
+            for (String part : spec.split(";")) {
+                String t = part.trim();
+                if (!t.isEmpty()) {
+                    entries.add(t);
+                }
+            }
+        }
+        return entries;
     }
 
     /** {metaAccess, lookupJavaType, link} or null when JVMCI is unavailable (probe degrades, loudly). */
