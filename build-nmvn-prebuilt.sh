@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# Builds a GraalVM native image of Maven (nmvn) with maven-clean-plugin baked in as a
-# PREBUILT, ISOLATED ClassRealm — snapshotted into the image heap at build time.
+# Builds a GraalVM native image of Maven (nmvn), optionally with plugins baked in as PREBUILT,
+# ISOLATED ClassRealms — snapshotted into the image heap at build time.
 #
 # Unlike the "flatten" approach (all baked plugins share the flat core realm, isolation lost),
-# the prebuilt plugin gets its OWN ClassRealm, constructed in PrebuiltPluginRealms' static
+# each baked plugin gets its OWN ClassRealm, constructed in PrebuiltPluginRealms' static
 # initializer at IMAGE BUILD TIME and frozen into the image (see PrebuiltPluginRealms.java).
 # Every other plugin still resolves dynamically at runtime via Crema (RuntimeClassLoading).
 #
@@ -15,7 +15,18 @@
 # per-plugin <dependencies>). Callers:
 #   - build-nmvn-catalog.sh  (product: GAVs from catalog.json)
 #   - build-nmvn-for-pom.sh   (optional: effective-pom of one project)
-# Without arguments the default list below is used.
+#
+# WITH NO ARGUMENTS it bakes nothing and produces a plain native image of Maven itself, where every
+# plugin — including the default lifecycle ones — is resolved and class-loaded at run time through
+# Crema. Use this as the baseline to measure baked images against:
+#
+#   ./build-nmvn-prebuilt.sh            # no plugins baked; all-dynamic (Crema)
+#   ./build-nmvn-prebuilt.sh g:a:v ...  # bake exactly these
+#
+# Note this is NOT the same as flatten-classloading's build-nmvn-no-crema.sh: that one has no
+# RuntimeClassLoading at all and instead bundles plugins onto the image classpath via
+# impl/maven-bundled-plugins. Here the plugin set is empty but Crema is still on, so plugins load
+# dynamically from the local repository exactly as on HotSpot.
 #
 set -euo pipefail
 
@@ -194,13 +205,18 @@ if [ -n "${JAVA_HOME:-}" ]; then
   echo ">>> JAVA_HOME:    $JAVA_HOME"
 fi
 
-# Baked ("supported") plugins. Versions MUST match what builds will request (explicit pins or the
-# default lifecycle bindings of this Maven snapshot) — prebuiltFor falls back to dynamic resolution
-# on any version skew.
-PLUGINS=(
-  "org.apache.maven.plugins:maven-clean-plugin:3.5.0"
-  "org.apache.maven.plugins:maven-compiler-plugin:3.13.0"
-)
+# Baked ("supported") plugins, one "g:a:v[|deps]" per argument. Versions MUST match what builds will
+# request (explicit pins or the default lifecycle bindings of this Maven snapshot) — routing falls
+# back to dynamic resolution on any version skew, so a baked-but-never-requested version is pure
+# dead weight in the image.
+#
+# NO ARGUMENTS = bake nothing: a plain native image of Maven itself, in which EVERY plugin (including
+# the default lifecycle ones) is resolved and class-loaded at run time through Crema. That is the
+# baseline the baked images are measured against, and it is the honest default — the previous
+# hardcoded pair baked a maven-compiler-plugin version no current build requests, so it silently
+# fell back to dynamic anyway. Both real callers (build-nmvn-catalog.sh, build-nmvn-for-pom.sh)
+# always pass an explicit list, so no existing invocation changes behaviour.
+PLUGINS=()
 if [ "$#" -gt 0 ]; then
   PLUGINS=("$@")
 fi
@@ -367,7 +383,9 @@ print(f"append_spec: {gav} ({n} jars, {len(line)} chars)", file=sys.stderr)
 PY
 }
 
-for ENTRY in "${PLUGINS[@]}"; do
+# ${arr[@]+...} guards the expansion: bash 3.2 (macOS /bin/bash) treats "${arr[@]}" on an empty
+# array as an unbound variable under 'set -u', so the no-bake path would abort here.
+for ENTRY in ${PLUGINS[@]+"${PLUGINS[@]}"}; do
   # Choke point for every caller (catalog, for-pom, hand-written argv): drop any CR the entry picked
   # up on the way here. Callers derive entries from python/mvn output, which on Windows is CRLF; a CR
   # surviving into the realm spec sits left of '=' where the readers see a line terminator and report
@@ -621,6 +639,15 @@ cp_append "$SIDECAR_JAR"
 #    already throw identically on JVM Maven, so stripping is behavior-preserving. Jars are
 #    rewritten into $WORK/sanitized (originals in ~/.m2 untouched) and the spec repointed.
 # ---------------------------------------------------------------------------------------------------
+# Spec validation and jar sanitizing are per-realm work: with nothing baked there is no spec to
+# validate (the validator treats an empty spec as an error, correctly — an empty spec when plugins
+# WERE requested means the resolution loop silently produced nothing) and no realm jars to probe.
+#
+# The guarded block below is deliberately left unindented: it contains <<'PY' heredocs whose
+# terminators must sit at column 0.
+if [ "${#PLUGINS[@]}" -eq 0 ]; then
+echo ">>> No plugins baked — every plugin resolves dynamically via Crema at run time."
+else
 echo ">>> Realm spec ($SPEC_FILE):"
 # Verify the spec as BYTES before any Java reads it: every line must be "coords=jars" with no CR and
 # no stray control character. A malformed line here is otherwise reported much later by
@@ -664,6 +691,7 @@ java \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
   -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}" \
   nmvn.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
+fi
 
 # ---------------------------------------------------------------------------------------------------
 # 4) Build the image.
@@ -718,11 +746,22 @@ NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
 #
 # Paths here are converted with to_cp_path: passed inside an @argument-file they bypass Git Bash, so
 # nothing turns /c/... into C:/... on our behalf any more.
+# Only point the image at a spec when something was actually baked. PrebuiltPluginRealms treats a
+# blank spec as "registry empty" and both caches then fall through to stock dynamic resolution, so
+# passing an empty file would also work — but unlinkable.txt does not exist when the sanitize step
+# is skipped, and omitting both keeps the no-bake image free of prebuilt wiring it never uses.
+PREBUILT_ARGS=()
+if [ "${#PLUGINS[@]}" -gt 0 ]; then
+  PREBUILT_ARGS=(
+    -Dnmvn.prebuilt.pluginsFile="$(to_cp_path "$SPEC_FILE")"
+    -Dnmvn.prebuilt.unlinkable="$(to_cp_path "$WORK/unlinkable.txt")"
+  )
+fi
+
 NATIVE_IMAGE_ARGS=(
   -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE"
   -classpath "$CLASSPATH"
-  -Dnmvn.prebuilt.pluginsFile="$(to_cp_path "$SPEC_FILE")"
-  -Dnmvn.prebuilt.unlinkable="$(to_cp_path "$WORK/unlinkable.txt")"
+  ${PREBUILT_ARGS[@]+"${PREBUILT_ARGS[@]}"}
   -Dguice_bytecode_gen_option=DISABLED
   --no-fallback
   -H:+UnlockExperimentalVMOptions
