@@ -277,20 +277,33 @@ cp_append() {
 }
 
 # Realm spec: one complete "g:a:v[|deps]=jar${CP_SEP}jar..." line per plugin (never ';' as entry
-# separator — on Windows CP_SEP is ';'). Written via Python so bash cannot mangle paths/`=`.
+# separator — on Windows CP_SEP is ';').
+#
+# IMPORTANT (Windows): do NOT pass the jar list as a shell function arg or env var — spring-boot
+# alone is tens of KB and hits CreateProcess / env size limits, truncating to just "g:a:v" (no '=').
+# Write jars to a small file, then let Python assemble the line (script via heredoc, data via file).
 SPEC_FILE="$WORK/spec.txt"
 : > "$SPEC_FILE"
 append_spec_line() {
-  # $1 = full line (may contain ';', '\', spaces). Appended as one UTF-8 line.
-  NMVN_SPEC_LINE="$1" NMVN_SPEC_FILE="$SPEC_FILE" python3 - <<'PY'
-import os
-line = os.environ["NMVN_SPEC_LINE"]
-path = os.environ["NMVN_SPEC_FILE"]
-# Normalize Windows paths to forward slashes so nothing treats '\' as escape later.
-line = line.replace("\\", "/")
-with open(path, "a", encoding="utf-8", newline="\n") as f:
+  # $1 = g:a:v; $2 = optional dep key; $3 = file containing pathSep-separated jar list
+  local gav="$1"
+  local dep_key="${2:-}"
+  local jars_file="$3"
+  python3 - "$SPEC_FILE" "$gav" "$dep_key" "$jars_file" "$CP_SEP" <<'PY'
+import sys
+spec_file, gav, dep_key, jars_file, sep = sys.argv[1:6]
+jars = open(jars_file, encoding="utf-8").read().replace("\\", "/").strip()
+if not jars:
+    raise SystemExit(f"append_spec_line: empty jar list for {gav} (file {jars_file})")
+coords = f"{gav}|{dep_key}" if dep_key else gav
+line = f"{coords}={jars}"
+if "=" not in line:
+    raise SystemExit(f"append_spec_line: internal error, no '=' in line for {gav}")
+with open(spec_file, "a", encoding="utf-8", newline="\n") as f:
     f.write(line)
     f.write("\n")
+n = jars.count(sep) + 1
+print(f"append_spec: {gav} ({n} jars, {len(line)} chars)", file=sys.stderr)
 PY
 }
 
@@ -460,11 +473,15 @@ SERPOM
 
   echo ">>> $A realm jars: $PLUGIN_JARS"
 
-  # One complete realm line per plugin (newline-separated file). See append_spec_line.
-  LINE="$GAV"
-  [ -n "$DEP_KEY" ] && LINE="$LINE|$DEP_KEY"
-  LINE="$LINE=$PLUGIN_JARS"
-  append_spec_line "$LINE"
+  # One complete realm line per plugin. Jars via file (not argv/env — Windows size limits).
+  if [ -z "$PLUGIN_JARS" ]; then
+    echo "Error: empty runtime classpath for $GAV"
+    exit 1
+  fi
+  JARS_FILE="$WORK/$A.jars"
+  # Bash can hold large variables; printf→file does not put the list in a child process env.
+  printf '%s' "$PLUGIN_JARS" > "$JARS_FILE"
+  append_spec_line "$GAV" "$DEP_KEY" "$JARS_FILE"
 done
 
 # ---------------------------------------------------------------------------------------------------

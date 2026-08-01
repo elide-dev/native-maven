@@ -87,8 +87,15 @@ public final class SanitizeRealmJars {
             int eq = entry.indexOf('=');
             if (eq < 0) {
                 throw new IllegalArgumentException(
-                        "Malformed prebuilt realm entry (missing '='): " + entry
-                                + " — on Windows jar lists use ';'; each realm must be on its own line");
+                        "Malformed prebuilt realm entry (missing '='): ["
+                                + entry
+                                + "] (len="
+                                + entry.length()
+                                + "). Each line must be g:a:v=jar"
+                                + File.pathSeparator
+                                + "jar... ; jar lists use pathSeparator='"
+                                + File.pathSeparator
+                                + "'. If you only see g:a:v, the line was truncated when writing the spec (Windows arg/env size).");
             }
             String gav = entry.substring(0, eq);
             String[] jars = entry.substring(eq + 1).split(File.pathSeparator);
