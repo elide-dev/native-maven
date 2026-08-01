@@ -11,7 +11,7 @@
 # Options:
 #   --runs N            timed iterations per engine after warmup (default: 3)
 #   --warmup N          untimed warmup runs per engine (default: 1)
-#   --nmvn-binary NAME  NMVN_BINARY value (default: nmvn-java-4.1.0-core)
+#   --nmvn-binary NAME  NMVN_BINARY value (default: nmvn-spring-4.1.0)
 #   --mvn CMD           classic Maven command (default: mvn on PATH, or MVN env)
 #   --goals "..."       Maven goals/args (default: clean package -DskipTests=true)
 #   --only NAME[,...]   only these example directory names
@@ -28,7 +28,7 @@ EXAMPLES_DIR="$SCRIPT_DIR/examples"
 
 RUNS=3
 WARMUP=1
-NMVN_BINARY_NAME="${NMVN_BINARY:-nmvn-java-4.1.0-core}"
+NMVN_BINARY_NAME="${NMVN_BINARY:-nmvn-spring-4.1.0}"
 MVN_CMD="${MVN:-mvn}"
 GOALS=(clean package -DskipTests=true)
 ONLY=""
@@ -67,7 +67,7 @@ fi
 
 if [ ! -x "$SCRIPT_DIR/$NMVN_BINARY_NAME" ]; then
   echo "Error: native binary not found/executable: $SCRIPT_DIR/$NMVN_BINARY_NAME" >&2
-  echo "       Build one first, e.g.: ./build-nmvn-catalog.sh --only core" >&2
+  echo "       Build one first, e.g.: ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json" >&2
   exit 1
 fi
 

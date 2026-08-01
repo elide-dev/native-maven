@@ -11,8 +11,11 @@
 # Usage:
 #   ./build-nmvn-prebuilt.sh [groupId:artifactId:version[|deps] ...]
 #
-# Plugins to bake can be passed as arguments (one g:a:v each, optionally with |canonical-deps
-# from build-nmvn-for-pom.sh); without arguments the default list below is used.
+# Plugins to bake are passed as arguments (one g:a:v each, optionally with |canonical-deps for
+# per-plugin <dependencies>). Callers:
+#   - build-nmvn-catalog.sh  (product: GAVs from catalog.json)
+#   - build-nmvn-for-pom.sh   (optional: effective-pom of one project)
+# Without arguments the default list below is used.
 #
 set -euo pipefail
 
@@ -75,7 +78,7 @@ if [ "$#" -gt 0 ]; then
   PLUGINS=("$@")
 fi
 
-# Drop plugins listed in NMVN_SKIP_PLUGINS (comma-separated artifactId or g:a), same as for-pom.
+# Drop plugins listed in NMVN_SKIP_PLUGINS (comma-separated artifactId or g:a).
 if [ -n "${NMVN_SKIP_PLUGINS:-}" ] && [ "${#PLUGINS[@]}" -gt 0 ]; then
   FILTERED=()
   for entry in "${PLUGINS[@]}"; do
@@ -134,7 +137,7 @@ EXPORTED_ARTIFACTS=$(unzip -p "$MAVEN_HOME"/lib/maven-core-*.jar META-INF/maven/
 PREBUILT_SPEC=""
 for ENTRY in "${PLUGINS[@]}"; do
   # Each entry is "groupId:artifactId:version" optionally followed by "|<canonical dependencies>"
-  # (emitted by build-nmvn-for-pom.sh; see PrebuiltPluginRealms.dependencyKey for the encoding).
+  # (see PrebuiltPluginRealms.dependencyKey for the encoding).
   GAV="${ENTRY%%|*}"
   DEP_KEY=""
   [ "$ENTRY" != "$GAV" ] && DEP_KEY="${ENTRY#*|}"

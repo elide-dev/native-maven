@@ -1,114 +1,78 @@
 {
   "bootVersion": "4.1.0",
   "language": "java",
-  "corePlugins": [
+  "buildTool": "maven",
+  "binary": "nmvn-spring-4.1.0",
+  "plugins": [
     "org.springframework.boot:spring-boot-maven-plugin:4.1.0",
     "org.apache.maven.plugins:maven-clean-plugin:3.5.0",
+    "org.apache.maven.plugins:maven-resources-plugin:3.5.0",
     "org.apache.maven.plugins:maven-compiler-plugin:3.15.0",
     "org.apache.maven.plugins:maven-surefire-plugin:3.5.6",
     "org.apache.maven.plugins:maven-jar-plugin:3.5.0",
     "org.apache.maven.plugins:maven-war-plugin:3.5.1",
     "org.apache.maven.plugins:maven-install-plugin:3.1.4",
-    "org.apache.maven.plugins:maven-resources-plugin:3.5.0",
     "org.apache.maven.plugins:maven-deploy-plugin:3.1.4",
     "org.apache.maven.plugins:maven-site-plugin:3.21.0"
   ],
-  "unbakeable": [
-    "org.graalvm.buildtools:native-maven-plugin",
-    "org.springframework.cloud:spring-cloud-contract-maven-plugin"
-  ],
-  "featurePlugins": {
-    "codegen-dgs": [
-      "io.github.deweyjose:graphqlcodegen-maven-plugin:1.61.5",
-      "org.codehaus.mojo:build-helper-maven-plugin:3.6.1"
-    ],
-    "grpc": [
-      "io.github.ascopes:protobuf-maven-plugin:5.1.4"
-    ],
-    "jpa-native": [
-      "org.hibernate.orm:hibernate-maven-plugin:7.4.1.Final"
-    ],
-    "restdocs": [
-      "org.asciidoctor:asciidoctor-maven-plugin:2.2.1|org.springframework.restdocs:spring-restdocs-asciidoctor:4.0.1:jar::compile"
-    ],
-    "sbom": [
-      "org.cyclonedx:cyclonedx-maven-plugin:2.9.1"
+  "outOfScope": {
+    "_comment": [
+      "Not currently prebaked into the specialized image (same category for every entry).",
+      "Not dropped and not permanently unbakeable \u2014 including extensions=true plugins,",
+      "which need more work for realm baking later but are not impossible forever.",
+      "Dynamic resolution (Crema) if a POM declares them.",
+      "Runtime Hibernate via spring-boot-starter-data-jpa needs no hibernate-maven-plugin."
     ],
     "vaadin": [
-      "com.vaadin:vaadin-maven-plugin:25.2.4"
+      "com.vaadin:vaadin-maven-plugin"
+    ],
+    "restdocs": [
+      "org.asciidoctor:asciidoctor-maven-plugin"
+    ],
+    "grpc": [
+      "io.github.ascopes:protobuf-maven-plugin"
+    ],
+    "sbom": [
+      "org.cyclonedx:cyclonedx-maven-plugin"
+    ],
+    "codegen-dgs": [
+      "io.github.deweyjose:graphqlcodegen-maven-plugin",
+      "org.codehaus.mojo:build-helper-maven-plugin"
+    ],
+    "native": [
+      "org.graalvm.buildtools:native-maven-plugin"
+    ],
+    "spring-cloud-contract": [
+      "org.springframework.cloud:spring-cloud-contract-maven-plugin"
+    ],
+    "hibernate-maven-plugin": [
+      "org.hibernate.orm:hibernate-maven-plugin"
+    ],
+    "notes": {
+      "native": "extensions=true today \u2192 different realm model; not prebaked yet, not forever impossible.",
+      "spring-cloud-contract": "extensions=true today \u2192 different realm model; not prebaked yet, not forever impossible.",
+      "hibernate-maven-plugin": "Enhance goal; Initializr adds it for native+data-jpa. Runtime JPA uses hibernate-core as a library without this plugin."
+    }
+  },
+  "pluginInfrastructure": {
+    "org.springframework.boot:spring-boot-maven-plugin": [
+      "org.apache.commons.logging."
     ]
   },
   "binaries": [
     {
-      "name": "nmvn-java-4.1.0-core",
-      "features": [],
-      "estimatedMb": 852,
+      "name": "nmvn-spring-4.1.0",
       "plugins": [
         "org.springframework.boot:spring-boot-maven-plugin:4.1.0",
         "org.apache.maven.plugins:maven-clean-plugin:3.5.0",
+        "org.apache.maven.plugins:maven-resources-plugin:3.5.0",
         "org.apache.maven.plugins:maven-compiler-plugin:3.15.0",
         "org.apache.maven.plugins:maven-surefire-plugin:3.5.6",
         "org.apache.maven.plugins:maven-jar-plugin:3.5.0",
         "org.apache.maven.plugins:maven-war-plugin:3.5.1",
         "org.apache.maven.plugins:maven-install-plugin:3.1.4",
-        "org.apache.maven.plugins:maven-resources-plugin:3.5.0",
         "org.apache.maven.plugins:maven-deploy-plugin:3.1.4",
         "org.apache.maven.plugins:maven-site-plugin:3.21.0"
-      ]
-    },
-    {
-      "name": "nmvn-java-4.1.0-grpc-restdocs-sbom",
-      "features": [
-        "grpc",
-        "restdocs",
-        "sbom"
-      ],
-      "estimatedMb": 960,
-      "plugins": [
-        "org.springframework.boot:spring-boot-maven-plugin:4.1.0",
-        "org.apache.maven.plugins:maven-clean-plugin:3.5.0",
-        "org.apache.maven.plugins:maven-compiler-plugin:3.15.0",
-        "org.apache.maven.plugins:maven-surefire-plugin:3.5.6",
-        "org.apache.maven.plugins:maven-jar-plugin:3.5.0",
-        "org.apache.maven.plugins:maven-war-plugin:3.5.1",
-        "org.apache.maven.plugins:maven-install-plugin:3.1.4",
-        "org.apache.maven.plugins:maven-resources-plugin:3.5.0",
-        "org.apache.maven.plugins:maven-deploy-plugin:3.1.4",
-        "org.apache.maven.plugins:maven-site-plugin:3.21.0",
-        "io.github.ascopes:protobuf-maven-plugin:5.1.4",
-        "org.asciidoctor:asciidoctor-maven-plugin:2.2.1|org.springframework.restdocs:spring-restdocs-asciidoctor:4.0.1:jar::compile",
-        "org.cyclonedx:cyclonedx-maven-plugin:2.9.1"
-      ]
-    },
-    {
-      "name": "nmvn-java-4.1.0-full",
-      "features": [
-        "codegen-dgs",
-        "grpc",
-        "jpa-native",
-        "restdocs",
-        "sbom",
-        "vaadin"
-      ],
-      "estimatedMb": 1186,
-      "plugins": [
-        "org.springframework.boot:spring-boot-maven-plugin:4.1.0",
-        "org.apache.maven.plugins:maven-clean-plugin:3.5.0",
-        "org.apache.maven.plugins:maven-compiler-plugin:3.15.0",
-        "org.apache.maven.plugins:maven-surefire-plugin:3.5.6",
-        "org.apache.maven.plugins:maven-jar-plugin:3.5.0",
-        "org.apache.maven.plugins:maven-war-plugin:3.5.1",
-        "org.apache.maven.plugins:maven-install-plugin:3.1.4",
-        "org.apache.maven.plugins:maven-resources-plugin:3.5.0",
-        "org.apache.maven.plugins:maven-deploy-plugin:3.1.4",
-        "org.apache.maven.plugins:maven-site-plugin:3.21.0",
-        "io.github.deweyjose:graphqlcodegen-maven-plugin:1.61.5",
-        "org.codehaus.mojo:build-helper-maven-plugin:3.6.1",
-        "io.github.ascopes:protobuf-maven-plugin:5.1.4",
-        "org.hibernate.orm:hibernate-maven-plugin:7.4.1.Final",
-        "org.asciidoctor:asciidoctor-maven-plugin:2.2.1|org.springframework.restdocs:spring-restdocs-asciidoctor:4.0.1:jar::compile",
-        "org.cyclonedx:cyclonedx-maven-plugin:2.9.1",
-        "com.vaadin:vaadin-maven-plugin:25.2.4"
       ]
     }
   ]

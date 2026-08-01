@@ -1,59 +1,113 @@
 #!/bin/bash
 #
-# Builds every native image in a catalog (catalog/catalog.json), one per entry, so a client can pick
-# the smallest binary that bakes everything its pom needs (catalog/nmvn_select.py does the picking).
+# Build specialized nmvn native image(s) from a catalog produced by resolve_boot_catalog.py.
 #
-# Why a catalog rather than one image
-# -----------------------------------
-# For language=java a SINGLE image is already sufficient: across all 205 start.spring.io dependencies
-# there is no groupId:artifactId collision, so one PrebuiltPluginRealms registry can hold the union
-# (that image is build-nmvn-for-initializr.sh). The catalog exists only to stop ~82% of projects from
-# downloading the ~334MB of feature realms they never load. Correctness is identical either way; the
-# axis being optimized is bytes.
+#   ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java \
+#       --emit catalog/nmvn-spring-4.1.0.json
+#   ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json
+#   # → nmvn-spring-4.1.0  (+ nmvn-spring-4.1.0.plugins)
 #
-# Each entry is built by build-nmvn-prebuilt.sh with an explicit plugin list, so nothing here depends
-# on a probe pom or on effective-pom resolution -- the versions were pinned into catalog.json by
-# plan_catalog.py from real start.spring.io output.
+# Delegates each catalog entry to build-nmvn-prebuilt.sh with that entry's plugin GAV list.
 #
-# Cost warning: these are full GraalVM native-image builds of ~1GB binaries. Expect tens of minutes
-# and many GB of RAM EACH, serially. --dry-run first.
+# Cost: full GraalVM native-image of ~1GB; tens of minutes and many GB RAM. Prefer --dry-run first.
 #
 # Usage:
-#   ./build-nmvn-catalog.sh [--catalog FILE] [--only NAME[,NAME...]] [--dry-run] [--keep-going]
-#
-#   --only        build just these catalog entries (by name, or by feature slug suffix)
-#   --dry-run     print what would be built, with plugin lists, and exit
-#   --keep-going  do not stop at the first failed entry; report a summary at the end
-#
-# Output: one binary per entry in this directory, named as in the catalog, plus a manifest
-# <name>.plugins listing exactly what got baked (useful for verifying a deployed binary).
+#   ./build-nmvn-catalog.sh <catalog.json> [--only NAME[,NAME...]] [--dry-run]
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CATALOG="$SCRIPT_DIR/catalog/catalog.json"
+
+usage() {
+  cat <<'EOF' >&2
+Usage:
+  ./build-nmvn-catalog.sh <catalog.json> [--only NAME[,NAME...]] [--dry-run]
+
+  <catalog.json>   Required. Path to a catalog for one Spring Boot version
+                   (from resolve_boot_catalog.py). Keep one file per Boot line, e.g.:
+                     catalog/nmvn-spring-4.1.0.json
+                     catalog/nmvn-spring-3.5.0.json
+
+  --only NAME      Build only this binary name from the catalog
+  --dry-run        Print plugins and exit (no native-image)
+
+Create a catalog first, then build:
+
+  ./catalog/resolve_boot_catalog.py \
+    --boot-version 4.1.0 \
+    --language java \
+    --emit catalog/nmvn-spring-4.1.0.json
+
+  ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json --dry-run
+  ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json
+EOF
+}
+
+CATALOG=""
 ONLY=""
 DRY_RUN=0
-KEEP_GOING=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --catalog) CATALOG="${2:?--catalog needs a file}"; shift 2 ;;
-    --only) ONLY="${2:?--only needs a name}"; shift 2 ;;
-    --dry-run) DRY_RUN=1; shift ;;
-    --keep-going) KEEP_GOING=1; shift ;;
-    *) echo "Error: unknown argument: $1" >&2; exit 2 ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --only)
+      ONLY="${2:?--only needs a name}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --catalog)
+      # Accept long form as well as the required positional arg.
+      CATALOG="${2:?--catalog needs a file}"
+      shift 2
+      ;;
+    -*)
+      echo "Error: unknown option: $1" >&2
+      echo >&2
+      usage
+      exit 2
+      ;;
+    *)
+      if [ -n "$CATALOG" ]; then
+        echo "Error: unexpected argument: $1 (catalog already set to $CATALOG)" >&2
+        echo >&2
+        usage
+        exit 2
+      fi
+      CATALOG="$1"
+      shift
+      ;;
   esac
 done
 
+if [ -z "$CATALOG" ]; then
+  echo "Error: catalog file is required." >&2
+  echo >&2
+  usage
+  exit 2
+fi
+
+# Resolve relative paths from the caller's cwd (usual for a required path arg).
 if [ ! -f "$CATALOG" ]; then
-  echo "Error: no catalog at $CATALOG" >&2
-  echo "       Generate one first:  ./catalog/plan_catalog.py --k 3 --emit catalog/catalog.json" >&2
+  echo "Error: catalog not found: $CATALOG" >&2
+  echo >&2
+  echo "Create one for the Spring Boot version you want, then pass that path:" >&2
+  echo >&2
+  echo "  ./catalog/resolve_boot_catalog.py \\" >&2
+  echo "    --boot-version 4.1.0 \\" >&2
+  echo "    --language java \\" >&2
+  echo "    --emit catalog/nmvn-spring-4.1.0.json" >&2
+  echo >&2
+  echo "  ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json" >&2
   exit 1
 fi
 
-# Names first, so the loop can be driven without re-parsing JSON in bash. Newline-separated because
-# no catalog name contains whitespace (plan_catalog.py slugifies feature labels).
+# Binary names from the catalog (one today: nmvn-spring-<bootVersion>).
 NAMES=$(python3 - "$CATALOG" "$ONLY" <<'PY'
 import json, sys
 catalog = json.load(open(sys.argv[1]))
@@ -66,7 +120,7 @@ PY
 )
 
 if [ -z "$NAMES" ]; then
-  echo "Error: no catalog entries matched${ONLY:+ --only $ONLY}" >&2
+  echo "Error: no catalog entries matched${ONLY:+ --only $ONLY} in $CATALOG" >&2
   exit 1
 fi
 
@@ -75,7 +129,6 @@ echo ">>> Catalog: $CATALOG"
 echo ">>> Building $COUNT image(s)$([ "$DRY_RUN" = 1 ] && echo ' (dry run)')"
 echo
 
-FAILED=()
 BUILT=()
 INDEX=0
 
@@ -97,12 +150,7 @@ PY
     [ -n "$line" ] && GAVS+=("$line")
   done <<< "$PLUGINS"
 
-  EST=$(python3 -c "
-import json,sys
-c=json.load(open('$CATALOG'))
-print(next(b['estimatedMb'] for b in c['binaries'] if b['name']=='$NAME'))")
-
-  echo "=== [$INDEX/$COUNT] $NAME  (~${EST}MB, ${#GAVS[@]} plugins)"
+  echo "=== [$INDEX/$COUNT] $NAME  (${#GAVS[@]} plugins)"
   printf '      %s\n' "${GAVS[@]}"
 
   if [ "$DRY_RUN" = 1 ]; then
@@ -118,18 +166,17 @@ print(next(b['estimatedMb'] for b in c['binaries'] if b['name']=='$NAME'))")
   if (cd "$SCRIPT_DIR" && ./build-nmvn-prebuilt.sh "${GAVS[@]}"); then
     if [ ! -f "$SCRIPT_DIR/nmvn-native" ]; then
       echo "!!! $NAME: build reported success but produced no nmvn-native" >&2
-      FAILED+=("$NAME")
+      exit 1
     else
       mv "$SCRIPT_DIR/nmvn-native" "$SCRIPT_DIR/$NAME"
       printf '%s\n' "${GAVS[@]}" > "$SCRIPT_DIR/$NAME.plugins"
       ACTUAL=$(du -m "$SCRIPT_DIR/$NAME" | cut -f1)
-      echo ">>> $NAME: ${ACTUAL}MB actual (estimate was ${EST}MB)"
-      BUILT+=("$NAME	${ACTUAL}MB	est ${EST}MB")
+      echo ">>> $NAME: ${ACTUAL}MB"
+      BUILT+=("$NAME	${ACTUAL}MB")
     fi
   else
     echo "!!! $NAME: build failed" >&2
-    FAILED+=("$NAME")
-    [ "$KEEP_GOING" = 1 ] || { echo "Stopping (use --keep-going to continue)." >&2; exit 1; }
+    exit 1
   fi
   echo
 done <<< "$NAMES"
@@ -139,13 +186,4 @@ done <<< "$NAMES"
 echo "=== Summary"
 if [ ${#BUILT[@]} -gt 0 ]; then
   printf '    ok      %s\n' "${BUILT[@]}"
-  # The estimates come from imageMbPerClosureMb=2.0 in model.json, which was never measured. Two
-  # actual sizes are enough to calibrate it; until then treat catalog sizes as ordinal, not absolute.
-  echo
-  echo "    If actual sizes drift from the estimates, recalibrate imageMbPerClosureMb in"
-  echo "    catalog/model.json from (size_b - size_a) / (closureMb_b - closureMb_a) and replan."
-fi
-if [ ${#FAILED[@]} -gt 0 ]; then
-  printf '    FAILED  %s\n' "${FAILED[@]}"
-  exit 1
 fi
