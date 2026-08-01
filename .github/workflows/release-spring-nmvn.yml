@@ -33,9 +33,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest-32-cores
-            platform: linux-x86_64
-            graal_file: graalvm-community-jdk-25i2-25.0.4_linux-x64_bin.tar.gz
+          # TEMPORARILY DISABLED: the ubuntu-latest-32-cores runner is unavailable. Re-enable when
+          # it is back — nothing else in this workflow is platform-specific, so uncommenting these
+          # three lines is the whole change.
+          # - os: ubuntu-latest-32-cores
+          #   platform: linux-x86_64
+          #   graal_file: graalvm-community-jdk-25i2-25.0.4_linux-x64_bin.tar.gz
           - os: ubuntu-latest-32-cores-arm64
             platform: linux-aarch64
             graal_file: graalvm-community-jdk-25i2-25.0.4_linux-aarch64_bin.tar.gz
