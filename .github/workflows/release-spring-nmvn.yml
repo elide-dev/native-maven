@@ -1,10 +1,15 @@
 # Build specialized Spring Boot nmvn native images (nmvn-spring-<bootVersion>) per platform.
 #
-# Same commands as local (no NMVN_* env required). Scripts write under build/ by default:
+# Same commands as local. Scripts write under build/ by default:
 #   build/catalogs/   — catalogs
 #   build/work/       — scratch
 #   build/nmvn-spring-* — images
 # Maven dist stays in apache-maven/target/.
+#
+# Toolchain: downloads GraalVM Community 25.2.4 (graal-25.2.4 / jdk 25.0.4) for the runner
+# platform and puts it on PATH. build-nmvn-prebuilt.sh requires Crema flags
+# (RuntimeClassLoading, GraalJITCompileAtRuntime); the workflow fails fast if the
+# downloaded native-image lacks them.
 #
 # Per platform, for Boot 4.1.0 and 4.0.7:
 #   resolve_boot_catalog.py → build-nmvn-catalog.sh → zip to dist/
@@ -20,6 +25,10 @@ concurrency:
 
 permissions: {}
 
+env:
+  # GraalVM Community 25 Innovation 2 — https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4
+  GRAAL_TAG: graal-25.2.4
+
 jobs:
   build:
     strategy:
@@ -28,12 +37,16 @@ jobs:
         include:
           - os: ubuntu-latest-32-cores
             platform: linux-x86_64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_linux-x64_bin.tar.gz
           - os: ubuntu-latest-32-cores-arm64
             platform: linux-aarch64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_linux-aarch64_bin.tar.gz
           - os: macos-arm64-cipool
             platform: macos-aarch64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_macos-aarch64_bin.tar.gz
           - os: windows-latest-16-cores
             platform: windows-x86_64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_windows-x64_bin.zip
 
     runs-on: ${{ matrix.os }}
     defaults:
@@ -49,35 +62,102 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up GraalVM
-        uses: graalvm/setup-graalvm@v1
-        with:
-          java-version: "25"
-          distribution: graalvm
-          components: native-image
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Verify native-image on PATH
+      - name: Download and install GraalVM 25.2
         run: |
-          if ! command -v native-image >/dev/null 2>&1; then
-            echo "::error::native-image not on PATH after setup-graalvm"
+          set -euo pipefail
+          GRAAL_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${GRAAL_TAG}/${{ matrix.graal_file }}"
+          INSTALL_ROOT="${RUNNER_TEMP:-/tmp}/graalvm-25.2"
+          ARCHIVE="${RUNNER_TEMP:-/tmp}/${{ matrix.graal_file }}"
+
+          echo ">>> Downloading ${GRAAL_URL}"
+          rm -rf "${INSTALL_ROOT}"
+          mkdir -p "${INSTALL_ROOT}"
+          curl -fsSL "${GRAAL_URL}" -o "${ARCHIVE}"
+
+          case "${{ matrix.graal_file }}" in
+            *.zip)
+              if command -v unzip >/dev/null 2>&1; then
+                unzip -q "${ARCHIVE}" -d "${INSTALL_ROOT}"
+              else
+                pwsh -NoProfile -Command "Expand-Archive -Path '${ARCHIVE}' -DestinationPath '${INSTALL_ROOT}' -Force"
+              fi
+              ;;
+            *)
+              tar -xzf "${ARCHIVE}" -C "${INSTALL_ROOT}"
+              ;;
+          esac
+
+          # Locate JAVA_HOME (macOS uses Contents/Home; Linux/Windows unpack to a single root).
+          JAVA_HOME_CANDIDATE=""
+          if [ -d "${INSTALL_ROOT}" ]; then
+            # Prefer */Contents/Home (macOS .app-style layout)
+            for d in "${INSTALL_ROOT}"/*/Contents/Home "${INSTALL_ROOT}"/*/*/Contents/Home; do
+              if [ -x "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ]; then
+                JAVA_HOME_CANDIDATE="$d"
+                break
+              fi
+            done
+            if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
+              for d in "${INSTALL_ROOT}"/*; do
+                if [ -d "$d" ] && { [ -x "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ]; }; then
+                  JAVA_HOME_CANDIDATE="$d"
+                  break
+                fi
+              done
+            fi
+          fi
+
+          if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
+            echo "::error::Could not find native-image under ${INSTALL_ROOT}"
+            find "${INSTALL_ROOT}" -maxdepth 4 -type f -name 'native-image*' 2>/dev/null | head -20 || true
             exit 1
           fi
-          echo "native-image: $(command -v native-image)"
-          native-image --version | head -3
+
+          echo "JAVA_HOME=${JAVA_HOME_CANDIDATE}" >> "$GITHUB_ENV"
+          echo "${JAVA_HOME_CANDIDATE}/bin" >> "$GITHUB_PATH"
+          echo ">>> JAVA_HOME=${JAVA_HOME_CANDIDATE}"
+          echo ">>> bin: ${JAVA_HOME_CANDIDATE}/bin"
+
+      - name: Verify Crema-capable native-image
+        run: |
+          set -euo pipefail
+          export PATH="${JAVA_HOME}/bin:${PATH}"
+          if ! command -v native-image >/dev/null 2>&1 && ! command -v native-image.cmd >/dev/null 2>&1; then
+            echo "::error::native-image not on PATH after GraalVM install"
+            echo "PATH=$PATH"
+            ls -la "${JAVA_HOME}/bin" | head -40
+            exit 1
+          fi
+          NI="$(command -v native-image 2>/dev/null || command -v native-image.cmd)"
+          echo ">>> native-image: ${NI}"
+          "${NI}" --version 2>&1 | head -8
+          OPTS="$("${NI}" --expert-options-all 2>&1 || true)"
+          for req in RuntimeClassLoading GraalJITCompileAtRuntime; do
+            case "$OPTS" in
+              *"$req"*) echo ">>> OK: ${req}" ;;
+              *)
+                echo "::error::Downloaded GraalVM 25.2 native-image lacks -H:±${req}"
+                echo "Path: ${NI}"
+                echo "This build needs Crema. If CE 25.2.4 still omits these flags, use a custom Graal build."
+                exit 1
+                ;;
+            esac
+          done
+          java -version 2>&1 | head -3
 
       - name: Strip SNAPSHOT from versions
         run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
 
-      # Same as flatten-classloading release.yml: wrapper is committed (mvnw + .mvn/wrapper).
       - name: Build Maven distribution
         run: |
+          export PATH="${JAVA_HOME}/bin:${PATH}"
           chmod +x ./mvnw
           ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
 
       - name: Resolve catalogs and build Spring specialized images
         run: |
           set -euo pipefail
+          export PATH="${JAVA_HOME}/bin:${PATH}"
           chmod +x catalog/resolve_boot_catalog.py build-nmvn-catalog.sh build-nmvn-prebuilt.sh
 
           # Fresh build tree (same layout as local defaults).

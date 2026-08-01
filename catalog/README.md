@@ -36,7 +36,11 @@
 
 2. **Resolvable** `spring-boot-starter-parent:<boot-version>` (network or local `.m2`).
 
-3. **`native-image` on PATH** (GraalVM with Crema: `RuntimeClassLoading`, `GraalJITCompileAtRuntime`).
+3. **`native-image` on PATH** with Crema flags:
+   - `-H:+RuntimeClassLoading`
+   - `-H:+GraalJITCompileAtRuntime`  
+   CI downloads **GraalVM Community 25.2.4** (`graal-25.2.4`) per platform and verifies those flags.
+   Locally use the same or another Crema-capable Graal on `PATH`.
 
 ---
 
