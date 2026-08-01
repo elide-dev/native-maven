@@ -724,7 +724,6 @@ NATIVE_IMAGE_ARGS=(
   -Dnmvn.prebuilt.pluginsFile="$(to_cp_path "$SPEC_FILE")"
   -Dnmvn.prebuilt.unlinkable="$(to_cp_path "$WORK/unlinkable.txt")"
   -Dguice_bytecode_gen_option=DISABLED
-  -march=native
   --no-fallback
   -H:+UnlockExperimentalVMOptions
   -H:+ReportExceptionStackTraces
