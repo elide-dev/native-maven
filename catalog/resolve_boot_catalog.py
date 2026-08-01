@@ -114,6 +114,22 @@ def die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _mvn_launcher(home: Path) -> Path | None:
+    """Return a runnable Maven launcher under home/bin.
+
+    On Windows, bin/mvn is a Unix shell script (CreateProcess → WinError 193). Prefer bin/mvn.cmd.
+    """
+    bin_dir = home / "bin"
+    if os.name == "nt":
+        for name in ("mvn.cmd", "mvn.bat"):
+            p = bin_dir / name
+            if p.is_file():
+                return p
+        return None
+    p = bin_dir / "mvn"
+    return p if p.is_file() else None
+
+
 def find_mvn() -> Path:
     """Prefer the repo's Apache Maven dist (version fidelity with baked binary), else PATH.
 
@@ -123,14 +139,14 @@ def find_mvn() -> Path:
 
     def dist_mvn() -> Path | None:
         for name in ("apache-maven-4.1.0-SNAPSHOT", "apache-maven-4.1.0"):
-            mvn = target / name / "bin" / "mvn"
-            if mvn.is_file():
-                return mvn
+            found = _mvn_launcher(target / name)
+            if found:
+                return found
         for home in sorted(target.glob("apache-maven-*")):
             if home.is_dir():
-                mvn = home / "bin" / "mvn"
-                if mvn.is_file():
-                    return mvn
+                found = _mvn_launcher(home)
+                if found:
+                    return found
         return None
 
     found = dist_mvn()
@@ -144,7 +160,8 @@ def find_mvn() -> Path:
         if found:
             return found
 
-    path_mvn = shutil.which("mvn")
+    # PATH: which("mvn") may return mvn.cmd on Windows.
+    path_mvn = shutil.which("mvn.cmd" if os.name == "nt" else "mvn") or shutil.which("mvn")
     if path_mvn:
         print(
             ">>> Warning: dist Maven not found; using PATH mvn "
@@ -157,6 +174,17 @@ def find_mvn() -> Path:
         "  mvn clean package -DskipTests -Drat.skip=true\n"
         "or put mvn on PATH."
     )
+
+
+def run_mvn(mvn: Path, args: list[str]) -> None:
+    """Run Maven so Windows .cmd launchers work (not via CreateProcess on the shell script)."""
+    mvn_s = str(mvn)
+    if os.name == "nt":
+        # .cmd/.bat need cmd.exe; Unix bin/mvn is not a Win32 app.
+        cmd = ["cmd", "/c", mvn_s, *args]
+    else:
+        cmd = [mvn_s, *args]
+    subprocess.check_call(cmd)
 
 
 def local(tag: str) -> str:
@@ -225,16 +253,17 @@ def resolve_plugins(mvn: Path, boot_version: str, language: str) -> list[str]:
         file=sys.stderr,
     )
     print(f">>> Using {mvn}", file=sys.stderr)
-    cmd = [
-        str(mvn),
-        "-q",
-        "-f",
-        str(pom),
-        "org.apache.maven.plugins:maven-help-plugin:3.5.1:effective-pom",
-        f"-Doutput={eff}",
-    ]
     try:
-        subprocess.check_call(cmd)
+        run_mvn(
+            mvn,
+            [
+                "-q",
+                "-f",
+                str(pom),
+                "org.apache.maven.plugins:maven-help-plugin:3.5.1:effective-pom",
+                f"-Doutput={eff}",
+            ],
+        )
     except subprocess.CalledProcessError as e:
         die(
             f"effective-pom failed for spring-boot-starter-parent:{boot_version} "

@@ -259,8 +259,18 @@ POM
 
   echo ">>> Resolving runtime classpath for $GAV ${DEP_KEY:+(+ per-plugin deps: $DEP_KEY)}..."
   # Prefer the dist's mvn (same snapshot the image embeds) over whatever is on PATH.
+  # Windows: bin/mvn is a Unix shell script; use mvn.cmd (same as resolve_boot_catalog.py).
   RESOLVE_MVN="$MAVEN_HOME/bin/mvn"
-  [ -x "$RESOLVE_MVN" ] || RESOLVE_MVN=mvn
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*)
+      if [ -f "$MAVEN_HOME/bin/mvn.cmd" ]; then
+        RESOLVE_MVN="$MAVEN_HOME/bin/mvn.cmd"
+      fi
+      ;;
+  esac
+  if [ ! -f "$RESOLVE_MVN" ] && [ ! -x "$RESOLVE_MVN" ]; then
+    RESOLVE_MVN=mvn
+  fi
   "$RESOLVE_MVN" -q -f "$WORK/pom.xml" \
       org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath \
       -Dmdep.outputFile="$CP_FILE" \
