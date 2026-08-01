@@ -29,9 +29,10 @@
 
 1. **Maven dist** (version fidelity with the baked image):
    ```bash
-   mvn clean package -DskipTests -Drat.skip=true
+   ./mvnw clean package -DskipTests -Drat.skip=true
    # → apache-maven/target/apache-maven-4.1.0-SNAPSHOT/
    ```
+   (Maven Wrapper: `mvnw` / `mvnw.cmd` + `.mvn/wrapper/` — same as CI.)
 
 2. **Resolvable** `spring-boot-starter-parent:<boot-version>` (network or local `.m2`).
 

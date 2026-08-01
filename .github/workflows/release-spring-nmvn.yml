@@ -69,13 +69,11 @@ jobs:
       - name: Strip SNAPSHOT from versions
         run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
 
+      # Same as flatten-classloading release.yml: wrapper is committed (mvnw + .mvn/wrapper).
       - name: Build Maven distribution
         run: |
-          if [ -x ./mvnw ]; then
-            ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
-          else
-            mvn clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
-          fi
+          chmod +x ./mvnw
+          ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
 
       - name: Resolve catalogs and build Spring specialized images
         run: |
