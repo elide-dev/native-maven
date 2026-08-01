@@ -115,18 +115,35 @@ def die(msg: str, code: int = 1) -> None:
 
 
 def find_mvn() -> Path:
-    """Prefer the repo's Apache Maven dist (version fidelity with baked binary), else PATH."""
+    """Prefer the repo's Apache Maven dist (version fidelity with baked binary), else PATH.
+
+    Dist dir may be apache-maven-4.1.0-SNAPSHOT (local) or apache-maven-4.1.0 (CI strips SNAPSHOT).
+    """
     target = REPO / "apache-maven" / "target"
-    home = target / "apache-maven-4.1.0-SNAPSHOT"
-    mvn = home / "bin" / "mvn"
-    if mvn.is_file() and os.access(mvn, os.X_OK):
-        return mvn
-    tarball = target / "apache-maven-4.1.0-SNAPSHOT-bin.tar.gz"
-    if tarball.is_file():
+
+    def dist_mvn() -> Path | None:
+        for name in ("apache-maven-4.1.0-SNAPSHOT", "apache-maven-4.1.0"):
+            mvn = target / name / "bin" / "mvn"
+            if mvn.is_file():
+                return mvn
+        for home in sorted(target.glob("apache-maven-*")):
+            if home.is_dir():
+                mvn = home / "bin" / "mvn"
+                if mvn.is_file():
+                    return mvn
+        return None
+
+    found = dist_mvn()
+    if found:
+        return found
+
+    for tarball in sorted(target.glob("apache-maven-*-bin.tar.gz")):
         print(f">>> Extracting {tarball} ...", file=sys.stderr)
         subprocess.check_call(["tar", "-xzf", str(tarball), "-C", str(target)])
-        if mvn.is_file():
-            return mvn
+        found = dist_mvn()
+        if found:
+            return found
+
     path_mvn = shutil.which("mvn")
     if path_mvn:
         print(

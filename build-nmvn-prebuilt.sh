@@ -31,7 +31,24 @@ NMVN_OUT_DIR="${NMVN_OUT_DIR:-$SCRIPT_DIR/build}"
 NMVN_WORK_DIR="${NMVN_WORK_DIR:-$SCRIPT_DIR/build/work}"
 mkdir -p "$NMVN_OUT_DIR" "$NMVN_WORK_DIR"
 
-MAVEN_HOME="${NMVN_MAVEN_HOME:-$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT}"
+# Resolve Maven home: explicit override, else any packaged apache-maven-* under target/
+# (CI strips -SNAPSHOT from poms → apache-maven-4.1.0; local SNAPSHOT builds keep -SNAPSHOT).
+if [ -n "${NMVN_MAVEN_HOME:-}" ]; then
+  MAVEN_HOME="$NMVN_MAVEN_HOME"
+else
+  MAVEN_HOME=""
+  for d in \
+      "$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT" \
+      "$TARGET_DIR/apache-maven-4.1.0" \
+      "$TARGET_DIR"/apache-maven-*; do
+    if [ -d "$d" ] && { [ -f "$d/bin/mvn" ] || [ -f "$d/bin/mvn.cmd" ]; }; then
+      MAVEN_HOME="$d"
+      break
+    fi
+  done
+  # Fallback path for the error/unpack message even if not built yet.
+  [ -n "$MAVEN_HOME" ] || MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
+fi
 
 # ---------------------------------------------------------------------------------------------------
 # 0a) TOOLCHAIN = whatever is on PATH.
@@ -122,16 +139,35 @@ fi
 # ---------------------------------------------------------------------------------------------------
 # 0) Ensure the Maven distribution is unpacked (provides boot/ + lib/ for the image classpath).
 # ---------------------------------------------------------------------------------------------------
-if [ ! -d "$MAVEN_HOME" ]; then
-  TARBALL="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT-bin.tar.gz"
-  if [ ! -f "$TARBALL" ]; then
-    echo "Error: $TARBALL not found. Build Maven first:"
-    echo "  mvn clean package -DskipTests -Drat.skip=true"
+if [ ! -d "$MAVEN_HOME" ] || { [ ! -f "$MAVEN_HOME/bin/mvn" ] && [ ! -f "$MAVEN_HOME/bin/mvn.cmd" ]; }; then
+  TARBALL=""
+  for t in "$TARGET_DIR"/apache-maven-*-bin.tar.gz; do
+    if [ -f "$t" ]; then
+      TARBALL="$t"
+      break
+    fi
+  done
+  if [ -z "$TARBALL" ]; then
+    echo "Error: Maven distribution not found under $TARGET_DIR"
+    echo "       Build Maven first:"
+    echo "         mvn clean package -DskipTests -Drat.skip=true"
     exit 1
   fi
-  echo "Extracting $TARBALL ..."
+  echo ">>> Extracting $TARBALL ..."
   tar -xzf "$TARBALL" -C "$TARGET_DIR"
+  MAVEN_HOME=""
+  for d in "$TARGET_DIR"/apache-maven-*; do
+    if [ -d "$d" ] && { [ -f "$d/bin/mvn" ] || [ -f "$d/bin/mvn.cmd" ]; }; then
+      MAVEN_HOME="$d"
+      break
+    fi
+  done
+  if [ -z "$MAVEN_HOME" ]; then
+    echo "Error: unpack of $TARBALL did not produce a usable Maven home under $TARGET_DIR"
+    exit 1
+  fi
 fi
+echo ">>> Maven dist: $MAVEN_HOME"
 
 # ---------------------------------------------------------------------------------------------------
 # 1) Resolve each plugin's runtime classpath SEPARATELY (plugin jar + its transitive RUNTIME deps).

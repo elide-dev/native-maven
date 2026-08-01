@@ -1,0 +1,170 @@
+# Build specialized Spring Boot nmvn native images (nmvn-spring-<bootVersion>) per platform.
+#
+# Same commands as local (no NMVN_* env required). Scripts write under build/ by default:
+#   build/catalogs/   — catalogs
+#   build/work/       — scratch
+#   build/nmvn-spring-* — images
+# Maven dist stays in apache-maven/target/.
+#
+# Per platform, for Boot 4.1.0 and 4.0.7:
+#   resolve_boot_catalog.py → build-nmvn-catalog.sh → zip to dist/
+#
+name: Build Spring Native Maven
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest-32-cores
+            platform: linux-x86_64
+          - os: ubuntu-latest-32-cores-arm64
+            platform: linux-aarch64
+          - os: macos-arm64-cipool
+            platform: macos-aarch64
+          - os: windows-latest-16-cores
+            platform: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+
+    env:
+      BOOT_VERSIONS: "4.1.0 4.0.7"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: "25"
+          distribution: graalvm
+          components: native-image
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify native-image on PATH
+        run: |
+          if ! command -v native-image >/dev/null 2>&1; then
+            echo "::error::native-image not on PATH after setup-graalvm"
+            exit 1
+          fi
+          echo "native-image: $(command -v native-image)"
+          native-image --version | head -3
+
+      - name: Strip SNAPSHOT from versions
+        run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
+
+      - name: Build Maven distribution
+        run: |
+          if [ -x ./mvnw ]; then
+            ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+          else
+            mvn clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+          fi
+
+      - name: Resolve catalogs and build Spring specialized images
+        run: |
+          set -euo pipefail
+          chmod +x catalog/resolve_boot_catalog.py build-nmvn-catalog.sh build-nmvn-prebuilt.sh
+
+          # Fresh build tree (same layout as local defaults).
+          rm -rf build dist
+          mkdir -p dist
+
+          package_zip() {
+            local zip_name="$1"
+            shift
+            if command -v zip >/dev/null 2>&1; then
+              zip -j "${zip_name}" "$@"
+            else
+              pwsh -NoProfile -Command \
+                "Compress-Archive -Path @($(printf "'%s'," "$@" | sed 's/,$//')) -DestinationPath '${zip_name}' -Force"
+            fi
+          }
+
+          for BOOT in $BOOT_VERSIONS; do
+            CATALOG="build/catalogs/nmvn-spring-${BOOT}.json"
+            echo "=========================================="
+            echo ">>> Boot ${BOOT}"
+            echo "=========================================="
+
+            ./catalog/resolve_boot_catalog.py \
+              --boot-version "${BOOT}" \
+              --language java
+
+            ./build-nmvn-catalog.sh "${CATALOG}"
+
+            BIN="build/nmvn-spring-${BOOT}"
+            if [ -f "${BIN}.exe" ]; then
+              BIN="${BIN}.exe"
+            fi
+            if [ ! -f "${BIN}" ]; then
+              echo "::error::Expected binary ${BIN} after build for Boot ${BOOT}"
+              ls -la build/ || true
+              exit 1
+            fi
+
+            PLUGINS="build/nmvn-spring-${BOOT}.plugins"
+            ZIP="nmvn-spring-${BOOT}-${{ matrix.platform }}-${{ github.sha }}.zip"
+            package_zip "dist/${ZIP}" "${BIN}" "${PLUGINS}"
+            echo ">>> Packaged dist/${ZIP}"
+          done
+
+          ls -la dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmvn-spring-${{ matrix.platform }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Clean workspace outputs
+        if: always()
+        run: rm -rf build dist
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Publish to R2
+        uses: elide-tools/r2-upload-action@main
+        with:
+          path: artifacts
+          target: native-maven
+          bucket: elide-userdata-public
+          account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Clean downloaded artifacts
+        if: always()
+        run: rm -rf artifacts
