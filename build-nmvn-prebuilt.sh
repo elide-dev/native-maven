@@ -51,7 +51,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------------
-# 0a) TOOLCHAIN = whatever is on PATH.
+# 0a) TOOLCHAIN = JAVA_HOME/bin if set, else PATH.
 #
 #     Needs native-image with DEVELOPMENT options used by baked realms:
 #       -H:+RuntimeClassLoading (Crema)
@@ -59,16 +59,69 @@ fi
 #     Those are not on every GraalVM release; fail fast with a clear message if missing so we do
 #     not burn tens of minutes resolving plugins before native-image rejects the flags.
 #
-#     Put the right Graal/JDK first on PATH (CI: graalvm/setup-graalvm). No JAVA_HOME / NMVN_* pin.
+#     Windows ships native-image.cmd (not a bare "native-image" Unix binary); resolve both.
 # ---------------------------------------------------------------------------------------------------
-if ! command -v native-image >/dev/null 2>&1; then
-  echo "Error: native-image not found on PATH."
-  echo "       Install a GraalVM (or other JDK) with native-image and ensure it is on PATH."
-  echo "       Example: export PATH=/path/to/graalvm/bin:\$PATH"
+if [ -n "${JAVA_HOME:-}" ]; then
+  # Normalize Windows paths for Git Bash if cygpath is available.
+  if command -v cygpath >/dev/null 2>&1; then
+    case "$JAVA_HOME" in
+      [A-Za-z]:*|/*) JAVA_HOME="$(cygpath -u "$JAVA_HOME" 2>/dev/null || echo "$JAVA_HOME")" ;;
+    esac
+  fi
+  export JAVA_HOME
+  export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
+find_native_image() {
+  # Prefer explicit JAVA_HOME first (CI downloads Graal there).
+  if [ -n "${JAVA_HOME:-}" ]; then
+    for c in \
+        "$JAVA_HOME/bin/native-image" \
+        "$JAVA_HOME/bin/native-image.cmd" \
+        "$JAVA_HOME/bin/native-image.exe"; do
+      if [ -f "$c" ] || [ -x "$c" ]; then
+        printf '%s\n' "$c"
+        return 0
+      fi
+    done
+  fi
+  # PATH: Unix binary or Windows cmd wrapper (Git Bash / command -v).
+  if command -v native-image >/dev/null 2>&1; then
+    command -v native-image
+    return 0
+  fi
+  if command -v native-image.cmd >/dev/null 2>&1; then
+    command -v native-image.cmd
+    return 0
+  fi
+  return 1
+}
+
+# Run native-image (handles .cmd under Windows Git Bash).
+run_native_image() {
+  case "$NATIVE_IMAGE" in
+    *.cmd|*.bat|*.CMD|*.BAT)
+      cmd.exe //c "$NATIVE_IMAGE" "$@"
+      ;;
+    *)
+      "$NATIVE_IMAGE" "$@"
+      ;;
+  esac
+}
+
+if ! NATIVE_IMAGE="$(find_native_image)"; then
+  echo "Error: native-image not found."
+  echo "       Install a GraalVM with native-image and either:"
+  echo "         export JAVA_HOME=/path/to/graalvm"
+  echo "         export PATH=\"\$JAVA_HOME/bin:\$PATH\""
+  echo "       On Windows the launcher is usually bin/native-image.cmd"
+  if [ -n "${JAVA_HOME:-}" ]; then
+    echo "       JAVA_HOME=$JAVA_HOME"
+    ls -la "$JAVA_HOME/bin"/native-image* 2>/dev/null || true
+  fi
   exit 1
 fi
 
-NATIVE_IMAGE="$(command -v native-image)"
 # Prefer a real path for the log line (symlinks on some installs).
 if command -v realpath >/dev/null 2>&1; then
   NATIVE_IMAGE="$(realpath "$NATIVE_IMAGE" 2>/dev/null || echo "$NATIVE_IMAGE")"
@@ -76,13 +129,13 @@ elif command -v readlink >/dev/null 2>&1; then
   NATIVE_IMAGE="$(readlink -f "$NATIVE_IMAGE" 2>/dev/null || echo "$NATIVE_IMAGE")"
 fi
 
-if ! command -v java >/dev/null 2>&1; then
+if ! command -v java >/dev/null 2>&1 && ! command -v java.exe >/dev/null 2>&1; then
   echo "Error: java not found on PATH (needed for realm sanitize / link probe)."
-  echo "       Put the same JDK that provides native-image on PATH."
+  echo "       Put the same JDK that provides native-image on PATH (or set JAVA_HOME)."
   exit 1
 fi
 
-EXPERT_OPTIONS="$("$NATIVE_IMAGE" --expert-options-all 2>&1 || true)"
+EXPERT_OPTIONS="$(run_native_image --expert-options-all 2>&1 || true)"
 # Matched with a shell 'case', NOT 'printf ... | grep -q': grep -q exits on the first match and closes
 # the pipe, printf then dies of SIGPIPE, and under 'set -o pipefail' the pipeline reports THAT failure
 # — so a successful match would look like a missing option and every toolchain would be rejected.
@@ -91,7 +144,7 @@ for required in RuntimeClassLoading GraalJITCompileAtRuntime; do
     echo "Error: this native-image does not support -H:±$required"
     echo "       (required for nmvn prebaked plugin realms / Crema):"
     echo "         path:    $NATIVE_IMAGE"
-    echo "         version: $($NATIVE_IMAGE --version 2>&1 | head -1)"
+    echo "         version: $(run_native_image --version 2>&1 | head -1)"
     echo "       Use a GraalVM build that includes RuntimeClassLoading and"
     echo "       GraalJITCompileAtRuntime, and put its bin/ first on PATH."
     exit 1
@@ -99,8 +152,11 @@ for required in RuntimeClassLoading GraalJITCompileAtRuntime; do
 done
 
 echo ">>> native-image: $NATIVE_IMAGE"
-echo ">>>               $($NATIVE_IMAGE --version 2>&1 | head -1)"
-echo ">>> java:         $(command -v java)"
+echo ">>>               $(run_native_image --version 2>&1 | head -1)"
+echo ">>> java:         $(command -v java 2>/dev/null || command -v java.exe 2>/dev/null || true)"
+if [ -n "${JAVA_HOME:-}" ]; then
+  echo ">>> JAVA_HOME:    $JAVA_HOME"
+fi
 
 # Baked ("supported") plugins. Versions MUST match what builds will request (explicit pins or the
 # default lifecycle bindings of this Maven snapshot) — prebuiltFor falls back to dynamic resolution
@@ -481,7 +537,7 @@ echo ">>> Building native image ..."
 # bulk plugins / bulk reflection over only raising this.
 NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
 
-"$NATIVE_IMAGE" \
+run_native_image \
   -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE" \
   -classpath "$CLASSPATH" \
   -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \

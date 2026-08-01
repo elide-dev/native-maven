@@ -6,10 +6,8 @@
 #   build/nmvn-spring-* — images
 # Maven dist stays in apache-maven/target/.
 #
-# Toolchain: downloads GraalVM Community 25.2.4 (graal-25.2.4 / jdk 25.0.4) for the runner
-# platform and puts it on PATH. build-nmvn-prebuilt.sh requires Crema flags
-# (RuntimeClassLoading, GraalJITCompileAtRuntime); the workflow fails fast if the
-# downloaded native-image lacks them.
+# Toolchain: download GraalVM CE 25.2.4, set JAVA_HOME (+ bin on PATH). Finding native-image
+# (including Windows native-image.cmd) and Crema checks live in build-nmvn-prebuilt.sh.
 #
 # Per platform, for Boot 4.1.0 and 4.0.7:
 #   resolve_boot_catalog.py → build-nmvn-catalog.sh → zip to dist/
@@ -26,7 +24,7 @@ concurrency:
 permissions: {}
 
 env:
-  # GraalVM Community 25 Innovation 2 — https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4
+  # https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4
   GRAAL_TAG: graal-25.2.4
 
 jobs:
@@ -87,77 +85,49 @@ jobs:
               ;;
           esac
 
-          # Locate JAVA_HOME (macOS uses Contents/Home; Linux/Windows unpack to a single root).
+          # Locate JAVA_HOME (macOS: Contents/Home; Linux/Windows: unpacked root).
           JAVA_HOME_CANDIDATE=""
-          if [ -d "${INSTALL_ROOT}" ]; then
-            # Prefer */Contents/Home (macOS .app-style layout)
-            for d in "${INSTALL_ROOT}"/*/Contents/Home "${INSTALL_ROOT}"/*/*/Contents/Home; do
-              if [ -x "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ]; then
+          for d in "${INSTALL_ROOT}"/*/Contents/Home "${INSTALL_ROOT}"/*/*/Contents/Home; do
+            if [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ] || [ -f "${d}/bin/native-image.exe" ]; then
+              JAVA_HOME_CANDIDATE="$d"
+              break
+            fi
+          done
+          if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
+            for d in "${INSTALL_ROOT}"/*; do
+              if [ -d "$d" ] && { [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ] || [ -f "${d}/bin/native-image.exe" ]; }; then
                 JAVA_HOME_CANDIDATE="$d"
                 break
               fi
             done
-            if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
-              for d in "${INSTALL_ROOT}"/*; do
-                if [ -d "$d" ] && { [ -x "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ]; }; then
-                  JAVA_HOME_CANDIDATE="$d"
-                  break
-                fi
-              done
-            fi
           fi
-
           if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
             echo "::error::Could not find native-image under ${INSTALL_ROOT}"
-            find "${INSTALL_ROOT}" -maxdepth 4 -type f -name 'native-image*' 2>/dev/null | head -20 || true
+            find "${INSTALL_ROOT}" -maxdepth 5 -type f \( -name 'native-image' -o -name 'native-image.cmd' -o -name 'native-image.exe' \) 2>/dev/null | head -20 || true
             exit 1
           fi
 
+          # Git Bash on Windows: store Unix-style JAVA_HOME for later bash steps.
+          if command -v cygpath >/dev/null 2>&1; then
+            JAVA_HOME_CANDIDATE="$(cygpath -u "${JAVA_HOME_CANDIDATE}")"
+          fi
+
+          # Subsequent steps inherit these (GITHUB_ENV / GITHUB_PATH).
           echo "JAVA_HOME=${JAVA_HOME_CANDIDATE}" >> "$GITHUB_ENV"
           echo "${JAVA_HOME_CANDIDATE}/bin" >> "$GITHUB_PATH"
           echo ">>> JAVA_HOME=${JAVA_HOME_CANDIDATE}"
-          echo ">>> bin: ${JAVA_HOME_CANDIDATE}/bin"
-
-      - name: Verify Crema-capable native-image
-        run: |
-          set -euo pipefail
-          export PATH="${JAVA_HOME}/bin:${PATH}"
-          if ! command -v native-image >/dev/null 2>&1 && ! command -v native-image.cmd >/dev/null 2>&1; then
-            echo "::error::native-image not on PATH after GraalVM install"
-            echo "PATH=$PATH"
-            ls -la "${JAVA_HOME}/bin" | head -40
-            exit 1
-          fi
-          NI="$(command -v native-image 2>/dev/null || command -v native-image.cmd)"
-          echo ">>> native-image: ${NI}"
-          "${NI}" --version 2>&1 | head -8
-          OPTS="$("${NI}" --expert-options-all 2>&1 || true)"
-          for req in RuntimeClassLoading GraalJITCompileAtRuntime; do
-            case "$OPTS" in
-              *"$req"*) echo ">>> OK: ${req}" ;;
-              *)
-                echo "::error::Downloaded GraalVM 25.2 native-image lacks -H:±${req}"
-                echo "Path: ${NI}"
-                echo "This build needs Crema. If CE 25.2.4 still omits these flags, use a custom Graal build."
-                exit 1
-                ;;
-            esac
-          done
-          java -version 2>&1 | head -3
 
       - name: Strip SNAPSHOT from versions
         run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
 
       - name: Build Maven distribution
         run: |
-          export PATH="${JAVA_HOME}/bin:${PATH}"
           chmod +x ./mvnw
           ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
 
       - name: Resolve catalogs and build Spring specialized images
         run: |
           set -euo pipefail
-          export PATH="${JAVA_HOME}/bin:${PATH}"
           chmod +x catalog/resolve_boot_catalog.py build-nmvn-catalog.sh build-nmvn-prebuilt.sh
 
           # Fresh build tree (same layout as local defaults).
