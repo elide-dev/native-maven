@@ -88,21 +88,25 @@ public final class SanitizeRealmJars {
             if (eq < 0) {
                 throw new IllegalArgumentException(
                         "Malformed prebuilt realm entry (missing '='): ["
-                                + entry
+                                + escape(entry)
                                 + "] (len="
                                 + entry.length()
                                 + "). Each line must be g:a:v=jar"
                                 + File.pathSeparator
                                 + "jar... ; jar lists use pathSeparator='"
                                 + File.pathSeparator
-                                + "'. If you only see g:a:v, the line was truncated when writing the spec (Windows arg/env size).");
+                                + "'. If you only see g:a:v, the line ended right where '=' should be: either the"
+                                + " spec line was truncated when written, or a line terminator (CR from a Windows"
+                                + " pipeline) sits inside the coordinates and split the entry here.");
             }
-            String gav = entry.substring(0, eq);
+            // trim(): a CR that leaked into a coordinate (Windows python stdout -> `read -r`) would
+            // otherwise become part of the realm key and never match at runtime.
+            String gav = entry.substring(0, eq).trim();
             String[] jars = entry.substring(eq + 1).split(File.pathSeparator);
             List<String> jarList = new ArrayList<>();
             for (String j : jars) {
                 if (!j.isBlank()) {
-                    jarList.add(j);
+                    jarList.add(j.trim());
                 }
             }
             if (jarList.isEmpty()) {
@@ -148,11 +152,34 @@ public final class SanitizeRealmJars {
         }
     }
 
+    /** Render control characters visibly, so a CR/LF inside a spec entry is readable in the error. */
+    static String escape(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 8);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\r') {
+                sb.append("\\r");
+            } else if (c == '\n') {
+                sb.append("\\n");
+            } else if (c == '\t') {
+                sb.append("\\t");
+            } else if (c < ' ') {
+                sb.append(String.format("\\u%04x", (int) c));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
     /** Split realm entries on newlines; also accept legacy ';' only when pathSeparator is not ';'. */
     static List<String> splitEntries(String spec) {
         List<String> entries = new ArrayList<>();
-        // Prefer line-based (portable). Trim each line; skip blanks.
-        for (String line : spec.split("\\R")) {
+        // LF only, NOT \R: the spec is always written with LF endings, so any CR present is data
+        // corruption (a Windows pipeline leaking \r into a coordinate) — and \R would split the
+        // entry there, reporting a bare "g:a:v" that looks truncated instead. Trimming each line
+        // absorbs a CR from CRLF endings and from such a leak. Skip blanks.
+        for (String line : spec.split("\n", -1)) {
             String t = line.trim();
             if (!t.isEmpty()) {
                 entries.add(t);

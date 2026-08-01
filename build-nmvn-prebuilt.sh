@@ -73,31 +73,36 @@ if [ -n "${JAVA_HOME:-}" ]; then
 fi
 
 find_native_image() {
-  # Prefer explicit JAVA_HOME first (CI downloads Graal there).
+  # Prefer explicit JAVA_HOME first (CI downloads Graal there). .exe before .cmd: a real executable
+  # is invoked directly, while the batch file has to go through cmd.exe and its 8191-char command
+  # line (see run_native_image).
   if [ -n "${JAVA_HOME:-}" ]; then
     for c in \
         "$JAVA_HOME/bin/native-image" \
-        "$JAVA_HOME/bin/native-image.cmd" \
-        "$JAVA_HOME/bin/native-image.exe"; do
+        "$JAVA_HOME/bin/native-image.exe" \
+        "$JAVA_HOME/bin/native-image.cmd"; do
       if [ -f "$c" ] || [ -x "$c" ]; then
         printf '%s\n' "$c"
         return 0
       fi
     done
   fi
-  # PATH: Unix binary or Windows cmd wrapper (Git Bash / command -v).
-  if command -v native-image >/dev/null 2>&1; then
-    command -v native-image
-    return 0
-  fi
-  if command -v native-image.cmd >/dev/null 2>&1; then
-    command -v native-image.cmd
-    return 0
-  fi
+  # PATH: Unix binary, Windows executable, or Windows cmd wrapper (Git Bash / command -v).
+  for n in native-image native-image.exe native-image.cmd; do
+    if command -v "$n" >/dev/null 2>&1; then
+      command -v "$n"
+      return 0
+    fi
+  done
   return 1
 }
 
 # Run native-image (handles .cmd under Windows Git Bash).
+#
+# NOTE (Windows): the launcher is a batch file, so this goes through cmd.exe, whose command line is
+# capped at 8191 characters — the -classpath alone is ~9KB with 86 jars, and cmd.exe answers with
+# "The command line is too long." Long invocations must therefore go through an @argument-file
+# (write_argfile below), not through "$@".
 run_native_image() {
   case "$NATIVE_IMAGE" in
     *.cmd|*.bat|*.CMD|*.BAT)
@@ -107,6 +112,32 @@ run_native_image() {
       "$NATIVE_IMAGE" "$@"
       ;;
   esac
+}
+
+# Write args to a JDK-style @argument-file, one arg per line. Quoting follows the tokenizer the
+# native-image driver and the java launcher share:
+#   - whitespace separates arguments, so anything containing it must be quoted;
+#   - ' and " group, so an argument containing either must be quoted (else the tokenizer swallows
+#     the rest of the file looking for the closing quote);
+#   - a '#' at the start of a line is a comment;
+#   - a backslash is an escape ONLY INSIDE quotes — doubling it in a bare argument would leave the
+#     doubled form in the value, corrupting Windows paths (verified against `java @argfile`).
+# Written from bash with no child process, so nothing can mangle or truncate values on the way.
+write_argfile() {
+  local out="$1"
+  shift
+  : >"$out"
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      '' | *[[:space:]]* | *'"'* | *"'"* | '#'*)
+        arg="${arg//\\/\\\\}"
+        arg="${arg//\"/\\\"}"
+        arg="\"$arg\""
+        ;;
+    esac
+    printf '%s\n' "$arg" >>"$out"
+  done
 }
 
 if ! NATIVE_IMAGE="$(find_native_image)"; then
@@ -153,6 +184,11 @@ done
 
 echo ">>> native-image: $NATIVE_IMAGE"
 echo ">>>               $(run_native_image --version 2>&1 | head -1)"
+# Which launchers this install actually ships — a .cmd means every invocation pays the cmd.exe
+# 8191-char command-line cap, so it matters which one got picked.
+if [ -n "${JAVA_HOME:-}" ]; then
+  echo ">>>               launchers: $(ls "$JAVA_HOME/bin"/native-image* 2>/dev/null | tr '\n' ' ')"
+fi
 echo ">>> java:         $(command -v java 2>/dev/null || command -v java.exe 2>/dev/null || true)"
 if [ -n "${JAVA_HOME:-}" ]; then
   echo ">>> JAVA_HOME:    $JAVA_HOME"
@@ -282,6 +318,12 @@ cp_append() {
 # IMPORTANT (Windows): do NOT pass the jar list as a shell function arg or env var — spring-boot
 # alone is tens of KB and hits CreateProcess / env size limits, truncating to just "g:a:v" (no '=').
 # Write jars to a small file, then let Python assemble the line (script via heredoc, data via file).
+#
+# IMPORTANT (Windows, part 2): a stray CR anywhere left of '=' is just as fatal as truncation, and
+# looks identical in the error — the readers split entries on line terminators, so "g:a:v\r=jars"
+# becomes a bare "g:a:v" entry with no '='. CR sneaks in whenever a value passed through a Windows
+# python's stdout (\n -> \r\n) and a `read -r` that keeps it. Coordinates are therefore scrubbed and
+# validated here, at the single point where the spec is written.
 SPEC_FILE="$WORK/spec.txt"
 : > "$SPEC_FILE"
 append_spec_line() {
@@ -291,14 +333,32 @@ append_spec_line() {
   local jars_file="$3"
   python3 - "$SPEC_FILE" "$gav" "$dep_key" "$jars_file" "$CP_SEP" <<'PY'
 import sys
-spec_file, gav, dep_key, jars_file, sep = sys.argv[1:6]
-jars = open(jars_file, encoding="utf-8").read().replace("\\", "/").strip()
+spec_file, gav_raw, dep_key_raw, jars_file, sep = sys.argv[1:6]
+# Scrub CR/LF/whitespace from the coordinates: they land LEFT of '=' where any line terminator
+# silently splits the entry in two (see the shell comment above).
+gav = gav_raw.strip().strip("\r\n").strip()
+dep_key = dep_key_raw.strip().strip("\r\n").strip()
+for name, raw, value in (("g:a:v", gav_raw, gav), ("dep key", dep_key_raw, dep_key)):
+    bad = [c for c in value if c == "=" or c == "\n" or c == "\r" or ord(c) < 0x20]
+    if bad:
+        raise SystemExit(
+            f"append_spec_line: {name} contains characters that would corrupt the spec line: "
+            f"{raw!r} -> {value!r}"
+        )
+if gav.count(":") != 2:
+    raise SystemExit(f"append_spec_line: expected groupId:artifactId:version, got {gav_raw!r}")
+# Read binary: text mode would translate a CR inside the jar list into \n (universal newlines),
+# turning a corrupt jar path into a spec line break that is much harder to diagnose.
+jars = open(jars_file, "rb").read().decode("utf-8").replace("\\", "/").strip()
 if not jars:
     raise SystemExit(f"append_spec_line: empty jar list for {gav} (file {jars_file})")
+if "\r" in jars or "\n" in jars:
+    raise SystemExit(
+        f"append_spec_line: jar list for {gav} contains a line terminator "
+        f"(file {jars_file}): {jars!r}"
+    )
 coords = f"{gav}|{dep_key}" if dep_key else gav
 line = f"{coords}={jars}"
-if "=" not in line:
-    raise SystemExit(f"append_spec_line: internal error, no '=' in line for {gav}")
 with open(spec_file, "a", encoding="utf-8", newline="\n") as f:
     f.write(line)
     f.write("\n")
@@ -308,6 +368,11 @@ PY
 }
 
 for ENTRY in "${PLUGINS[@]}"; do
+  # Choke point for every caller (catalog, for-pom, hand-written argv): drop any CR the entry picked
+  # up on the way here. Callers derive entries from python/mvn output, which on Windows is CRLF; a CR
+  # surviving into the realm spec sits left of '=' where the readers see a line terminator and report
+  # the entry as "truncated to a bare g:a:v".
+  ENTRY="${ENTRY//$'\r'/}"
   # Each entry is "groupId:artifactId:version" optionally followed by "|<canonical dependencies>"
   # (see PrebuiltPluginRealms.dependencyKey for the encoding).
   GAV="${ENTRY%%|*}"
@@ -398,6 +463,10 @@ POM
 import os
 import sys
 
+# Windows python writes \r\n for every \n on stdout; `$(...)` strips the \n but keeps the \r, which
+# would then ride along inside the realm jar list. Emit LF only.
+sys.stdout.reconfigure(newline="\n")
+
 exported = set(os.environ["NMVN_EXPORTED"].split())
 kept = []
 for jar in open(sys.argv[1]).read().strip().split(os.pathsep):
@@ -421,6 +490,9 @@ PY
     echo "Error: could not resolve runtime classpath for $GAV"
     exit 1
   fi
+  # Same CR hygiene as for the coordinates: the list came through a python stdout / command
+  # substitution, and a CR inside it becomes part of a jar path.
+  PLUGIN_JARS="${PLUGIN_JARS//$'\r'/}"
 
   # kotlin-compiler-embeddable ships IntelliJ XML DOM types (e.g. XmlElement) that are compiled
   # against kotlinx.serialization (KSerializer[] in member signatures) but does NOT declare that
@@ -458,6 +530,7 @@ SERPOM
     # Only the serialization artifact itself — not its transitive kotlin-stdlib, which may be an
     # older version than the one already on the kotlin realm and would reintroduce version mixing.
     while IFS= read -r ser_jar; do
+      ser_jar="${ser_jar%$'\r'}"
       [ -z "$ser_jar" ] && continue
       case "$ser_jar" in
         *kotlinx-serialization*) ;;
@@ -549,7 +622,35 @@ cp_append "$SIDECAR_JAR"
 #    rewritten into $WORK/sanitized (originals in ~/.m2 untouched) and the spec repointed.
 # ---------------------------------------------------------------------------------------------------
 echo ">>> Realm spec ($SPEC_FILE):"
-wc -l "$SPEC_FILE" | awk '{print ">>>   " $1 " plugin realm(s)"}'
+# Verify the spec as BYTES before any Java reads it: every line must be "coords=jars" with no CR and
+# no stray control character. A malformed line here is otherwise reported much later by
+# SanitizeRealmJars / PrebuiltPluginRealms as an entry that merely "looks truncated".
+python3 - "$SPEC_FILE" "$CP_SEP" <<'PY'
+import sys
+spec_file, sep = sys.argv[1:3]
+data = open(spec_file, "rb").read()
+if b"\r" in data:
+    i = data.index(b"\r")
+    raise SystemExit(
+        f"realm spec {spec_file} contains CR at byte {i} — the spec is written with LF endings, so "
+        f"a CR means a Windows pipeline leaked one into a coordinate or a jar path. "
+        f"Context: {data[max(0, i - 80):i + 20]!r}"
+    )
+lines = [ln for ln in data.decode("utf-8").split("\n") if ln.strip()]
+if not lines:
+    raise SystemExit(f"realm spec {spec_file} is empty")
+for n, line in enumerate(lines, 1):
+    if "=" not in line:
+        raise SystemExit(
+            f"realm spec {spec_file} line {n} has no '=' (len={len(line)}): {line[:120]!r}"
+        )
+    coords, jars = line.split("=", 1)
+    # coords is "g:a:v" optionally followed by "|<dep key>" (whose entries hold colons too).
+    if coords.split("|", 1)[0].count(":") != 2 or not jars.strip():
+        raise SystemExit(f"realm spec {spec_file} line {n} is malformed: {line[:120]!r}")
+    print(f">>>   {coords} ({jars.count(sep) + 1} jars)")
+print(f">>>   {len(lines)} plugin realm(s)")
+PY
 echo ">>> Sanitizing realm jars + link probe ..."
 # JVMCI flags: the tool runs the SAME ResolvedJavaType.link() SVM runs on registered classes,
 # against an exact replica of each baked realm; failures land in unlinkable.txt and are dropped
@@ -614,60 +715,100 @@ NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
 
 # pluginsFile (not inline -D) so Windows jar paths using ';' do not collide with an entry
 # separator, and so the huge multi-line spec is not jammed onto the command line.
-run_native_image \
-  -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE" \
-  -classpath "$CLASSPATH" \
-  -Dnmvn.prebuilt.pluginsFile="$SPEC_FILE" \
-  -Dnmvn.prebuilt.unlinkable="$WORK/unlinkable.txt" \
-  -Dguice_bytecode_gen_option=DISABLED \
-  -march=native \
-  --no-fallback \
-  -H:+UnlockExperimentalVMOptions \
-  -H:+ReportExceptionStackTraces \
-  -H:+AllowJRTFileSystem \
-  -H:+RuntimeClassLoading \
-  -H:+GraalJITCompileAtRuntime \
-  -H:EnableURLProtocols=jar \
-  -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*' \
-  -H:IncludeResources='org/apache/maven/plugins/clean/.*' \
-  -H:ConfigurationFileDirectories=reflection-min \
-  -H:Preserve=module=java.base \
-  -H:Preserve=module=java.logging \
-  -H:Preserve=module=java.xml \
-  -H:Preserve=module=java.desktop \
-  -H:Preserve=module=java.compiler \
-  -H:Preserve=module=jdk.compiler \
-  -H:Preserve=package=org.apache.maven.* \
-  -H:Preserve=package=com.ctc.wstx.* \
-  -H:Preserve=package=org.apache.commons.logging.impl.* \
-  -H:Preserve=package=org.eclipse.aether.* \
-  -H:Preserve=package=org.slf4j.* \
-  -H:Preserve=package=org.codehaus.plexus.* \
-  -H:Preserve=package=nmvn.* \
-  -H:Preserve=package=com.google.inject.* \
-  -H:Preserve=package=com.google.common.* \
-  -H:Preserve=package=org.eclipse.sisu.* \
-  -H:Preserve=package=org.sonatype.* \
-  -H:Preserve=package=org.fusesource.* \
-  -H:Preserve=package=org.jline.* \
-  -H:Preserve=package=javax.inject.* \
-  -H:Preserve=module=jdk.unsupported \
-  --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED \
-  --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
-  --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
-  --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
-  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,nmvn.PrebuiltPluginRealms$SelfFirstRealm,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
-  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary,jdk.internal.jrtfs.SystemImage \
-  --features=nmvn.PrebuiltReflectionFeature \
-  nmvn.NmvnLauncher \
-  "$NMVN_OUT_DIR/nmvn-native"
+#
+# Paths here are converted with to_cp_path: passed inside an @argument-file they bypass Git Bash, so
+# nothing turns /c/... into C:/... on our behalf any more.
+NATIVE_IMAGE_ARGS=(
+  -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE"
+  -classpath "$CLASSPATH"
+  -Dnmvn.prebuilt.pluginsFile="$(to_cp_path "$SPEC_FILE")"
+  -Dnmvn.prebuilt.unlinkable="$(to_cp_path "$WORK/unlinkable.txt")"
+  -Dguice_bytecode_gen_option=DISABLED
+  -march=native
+  --no-fallback
+  -H:+UnlockExperimentalVMOptions
+  -H:+ReportExceptionStackTraces
+  -H:+AllowJRTFileSystem
+  -H:+RuntimeClassLoading
+  -H:+GraalJITCompileAtRuntime
+  -H:EnableURLProtocols=jar
+  -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
+  -H:IncludeResources='org/apache/maven/plugins/clean/.*'
+  -H:ConfigurationFileDirectories=reflection-min
+  -H:Preserve=module=java.base
+  -H:Preserve=module=java.logging
+  -H:Preserve=module=java.xml
+  -H:Preserve=module=java.desktop
+  -H:Preserve=module=java.compiler
+  -H:Preserve=module=jdk.compiler
+  -H:Preserve=package=org.apache.maven.*
+  -H:Preserve=package=com.ctc.wstx.*
+  -H:Preserve=package=org.apache.commons.logging.impl.*
+  -H:Preserve=package=org.eclipse.aether.*
+  -H:Preserve=package=org.slf4j.*
+  -H:Preserve=package=org.codehaus.plexus.*
+  -H:Preserve=package=nmvn.*
+  -H:Preserve=package=com.google.inject.*
+  -H:Preserve=package=com.google.common.*
+  -H:Preserve=package=org.eclipse.sisu.*
+  -H:Preserve=package=org.sonatype.*
+  -H:Preserve=package=org.fusesource.*
+  -H:Preserve=package=org.jline.*
+  -H:Preserve=package=javax.inject.*
+  -H:Preserve=module=jdk.unsupported
+  --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED
+  --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED
+  --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
+  --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
+  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,nmvn.PrebuiltPluginRealms$SelfFirstRealm,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool'
+  # The whole jline ffm PACKAGE, not just CLibrary: nested types are separate classes, so naming the
+  # outer class leaves CLibrary$termios build-time-initialized (SVM initializes JDK classes at build
+  # time by default) — and on Windows its <clinit> throws "Unsupported system!" because the FFM
+  # struct layout it computes is POSIX-only. Deferring the package covers termios/winsize and any
+  # sibling that would trip next; at run time jline probes providers and falls back, exactly as it
+  # does on HotSpot Windows today.
+  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm,jdk.internal.jrtfs.SystemImage
+  --features=nmvn.PrebuiltReflectionFeature
+  nmvn.NmvnLauncher
+  "$(to_cp_path "$NMVN_OUT_DIR/nmvn-native")"
+)
+
+# Pass the invocation as an @argument-file ("@argument — one or more argument files containing
+# options", native-image option reference). Mandatory when the launcher is the Windows .cmd, which
+# runs through cmd.exe and its 8191-char command line — the classpath alone exceeds that. Used on
+# every platform so the one code path is also the one exercised locally.
+#
+# Deliberately NOT gated behind a capability probe: a probe that fails for any other reason (path
+# form, quoting, option ordering) would abort a build that would otherwise work, and no probe can
+# tell those apart. Run the real thing and let native-image's own error text stand.
+NATIVE_IMAGE_ARGFILE="$WORK/native-image-args.txt"
+write_argfile "$NATIVE_IMAGE_ARGFILE" "${NATIVE_IMAGE_ARGS[@]}"
+echo ">>> native-image argument file ($NATIVE_IMAGE_ARGFILE): $(wc -l <"$NATIVE_IMAGE_ARGFILE" | tr -d ' ') args"
+sed 's/^/>>>   /' "$NATIVE_IMAGE_ARGFILE"
+
+NATIVE_IMAGE_ARGFILE_ARG="@$(to_cp_path "$NATIVE_IMAGE_ARGFILE")"
+echo ">>> $NATIVE_IMAGE $NATIVE_IMAGE_ARGFILE_ARG"
+if ! run_native_image "$NATIVE_IMAGE_ARGFILE_ARG"; then
+  echo "Error: native-image failed (see its output above)."
+  case "$NATIVE_IMAGE" in
+    *.cmd|*.bat|*.CMD|*.BAT)
+      echo "       If the failure is about the argument file itself rather than the build:"
+      echo "         file:     $NATIVE_IMAGE_ARGFILE"
+      echo "         passed as $NATIVE_IMAGE_ARGFILE_ARG"
+      echo "       Arguments cannot be passed directly with this launcher — it is a batch file, so"
+      echo "       the invocation goes through cmd.exe, whose command line caps at 8191 chars while"
+      echo "       the classpath alone is $(printf '%s' "$CLASSPATH" | wc -c | tr -d ' ') chars."
+      ;;
+  esac
+  exit 1
+fi
 
 echo ">>> Done: $NMVN_OUT_DIR/nmvn-native"

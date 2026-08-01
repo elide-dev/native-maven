@@ -112,6 +112,10 @@ fi
 # Binary names from the catalog (one today: nmvn-spring-<bootVersion>).
 NAMES=$(python3 - "$CATALOG" "$ONLY" <<'PY'
 import json, sys
+# Windows python translates \n -> \r\n on stdout; `$(...)` strips the trailing \n but NOT the \r, so
+# every value read back here would carry a CR. Downstream that CR ends up left of '=' in the realm
+# spec, where the readers treat it as a line terminator and the entry looks truncated. Emit LF only.
+sys.stdout.reconfigure(newline="\n")
 catalog = json.load(open(sys.argv[1]))
 only = [s for s in sys.argv[2].split(',') if s]
 for b in catalog['binaries']:
@@ -135,20 +139,29 @@ BUILT=()
 INDEX=0
 
 while IFS= read -r NAME; do
+  NAME="${NAME%$'\r'}"
   INDEX=$((INDEX + 1))
 
   # One plugin spec per line. Specs may carry a |canonical-deps suffix (asciidoctor does), which must
   # survive as a single argv entry -- hence read -r into an array rather than word splitting.
   PLUGINS=$(python3 - "$CATALOG" "$NAME" <<'PY'
 import json, sys
+sys.stdout.reconfigure(newline="\n")  # LF only — see the NAMES probe above
 catalog = json.load(open(sys.argv[1]))
-entry = next(b for b in catalog['binaries'] if b['name'] == sys.argv[2])
+name = sys.argv[2].strip()
+try:
+    entry = next(b for b in catalog['binaries'] if b['name'] == name)
+except StopIteration:
+    raise SystemExit(f"catalog has no binary named {sys.argv[2]!r}")
 for p in entry['plugins']:
     print(p)
 PY
 )
+  # Belt and braces: a CR reaching a GAV lands left of '=' in the realm spec, where every reader
+  # treats it as a line terminator and the entry then looks truncated to a bare g:a:v.
   GAVS=()
   while IFS= read -r line; do
+    line="${line%$'\r'}"
     [ -n "$line" ] && GAVS+=("$line")
   done <<< "$PLUGINS"
 

@@ -1180,10 +1180,15 @@ public final class PrebuiltPluginRealms {
     /**
      * Split realm entries on newlines. On Unix, also accept legacy {@code ';'} entry separators
      * when pathSeparator is not {@code ';'} (Windows uses {@code ';'} for jar lists).
+     *
+     * <p>Splits on LF only, not {@code \R}: the spec is written with LF endings, so a CR in it is
+     * data corruption (a Windows pipeline leaking {@code \r} into a coordinate). Splitting on
+     * {@code \R} would cut the entry at that CR and report a bare {@code g:a:v} that merely looks
+     * truncated; the per-line {@code trim()} below absorbs it instead (and handles CRLF files).
      */
     private static java.util.List<String> splitPluginEntries(String spec) {
         java.util.List<String> entries = new java.util.ArrayList<>();
-        for (String line : spec.split("\\R")) {
+        for (String line : spec.split("\n", -1)) {
             String t = line.trim();
             if (!t.isEmpty()) {
                 entries.add(t);

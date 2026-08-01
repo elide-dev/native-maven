@@ -146,7 +146,11 @@ for project in projects:
 PY
 
 GAVS=()
+# Strip CR: on Windows python writes \r\n for every \n, so plugins.list has CRLF endings and a bare
+# `read -r` keeps the CR. That CR would ride into the realm spec left of '=', where the readers see a
+# line terminator and report the entry as truncated to a bare g:a:v.
 while IFS= read -r line; do
+  line="${line%$'\r'}"
   [ -n "$line" ] && GAVS+=("$line")
 done < "$WORK/plugins.list"
 
