@@ -2,11 +2,10 @@
 #
 # Build specialized nmvn native image(s) from a catalog produced by resolve_boot_catalog.py.
 #
-#   ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java \
-#       --emit catalog/nmvn-spring-4.1.0.json
-#   ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json
-#   # → nmvn-spring-4.1.0  (+ nmvn-spring-4.1.0.plugins)
-#
+#   ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
+#   ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+#   # → build/nmvn-spring-4.1.0
+##
 # Delegates each catalog entry to build-nmvn-prebuilt.sh with that entry's plugin GAV list.
 #
 # Cost: full GraalVM native-image of ~1GB; tens of minutes and many GB RAM. Prefer --dry-run first.
@@ -18,28 +17,32 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Same layout as build-nmvn-prebuilt.sh (local == CI):
+#   build/       — final binary + .plugins
+#   build/work/  — scratch
+NMVN_OUT_DIR="${NMVN_OUT_DIR:-$SCRIPT_DIR/build}"
+mkdir -p "$NMVN_OUT_DIR"
+
 usage() {
   cat <<'EOF' >&2
 Usage:
   ./build-nmvn-catalog.sh <catalog.json> [--only NAME[,NAME...]] [--dry-run]
 
   <catalog.json>   Required. Path to a catalog for one Spring Boot version
-                   (from resolve_boot_catalog.py). Keep one file per Boot line, e.g.:
-                     catalog/nmvn-spring-4.1.0.json
-                     catalog/nmvn-spring-3.5.0.json
+                   (from resolve_boot_catalog.py). One file per Boot line, e.g.:
+                     build/catalogs/nmvn-spring-4.1.0.json
 
   --only NAME      Build only this binary name from the catalog
   --dry-run        Print plugins and exit (no native-image)
 
+  Output (default): build/nmvn-spring-<bootVersion>
+  Scratch:          build/work/
+
 Create a catalog first, then build:
 
-  ./catalog/resolve_boot_catalog.py \
-    --boot-version 4.1.0 \
-    --language java \
-    --emit catalog/nmvn-spring-4.1.0.json
-
-  ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json --dry-run
-  ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json
+  ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
+  ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json --dry-run
+  ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 EOF
 }
 
@@ -100,10 +103,9 @@ if [ ! -f "$CATALOG" ]; then
   echo >&2
   echo "  ./catalog/resolve_boot_catalog.py \\" >&2
   echo "    --boot-version 4.1.0 \\" >&2
-  echo "    --language java \\" >&2
-  echo "    --emit catalog/nmvn-spring-4.1.0.json" >&2
+  echo "    --language java" >&2
   echo >&2
-  echo "  ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json" >&2
+  echo "  ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json" >&2
   exit 1
 fi
 
@@ -158,21 +160,34 @@ PY
     continue
   fi
 
-  # build-nmvn-prebuilt.sh always writes ./nmvn-native in its cwd; run from SCRIPT_DIR and rename so
-  # concurrent-looking output cannot be confused between entries. A stale nmvn-native from an earlier
-  # aborted run would otherwise be renamed as if it were this entry's build.
-  rm -f "$SCRIPT_DIR/nmvn-native"
+  # prebuilt writes $NMVN_OUT_DIR/nmvn-native(.exe); rename to the catalog binary name there.
+  # Wipe any stale image so a failed previous run cannot be mistaken for this entry.
+  rm -f "$NMVN_OUT_DIR/nmvn-native" "$NMVN_OUT_DIR/nmvn-native.exe"
 
-  if (cd "$SCRIPT_DIR" && ./build-nmvn-prebuilt.sh "${GAVS[@]}"); then
-    if [ ! -f "$SCRIPT_DIR/nmvn-native" ]; then
-      echo "!!! $NAME: build reported success but produced no nmvn-native" >&2
+  if (
+    cd "$SCRIPT_DIR"
+    export NMVN_OUT_DIR
+    # Only forward work dir when the caller set it (empty would defeat prebuilt's default).
+    [ -n "${NMVN_WORK_DIR:-}" ] && export NMVN_WORK_DIR
+    ./build-nmvn-prebuilt.sh "${GAVS[@]}"
+  ); then
+    OUT_SRC=""
+    OUT_DST="$NMVN_OUT_DIR/$NAME"
+    if [ -f "$NMVN_OUT_DIR/nmvn-native" ]; then
+      OUT_SRC="$NMVN_OUT_DIR/nmvn-native"
+    elif [ -f "$NMVN_OUT_DIR/nmvn-native.exe" ]; then
+      OUT_SRC="$NMVN_OUT_DIR/nmvn-native.exe"
+      OUT_DST="$NMVN_OUT_DIR/$NAME.exe"
+    fi
+    if [ -z "$OUT_SRC" ]; then
+      echo "!!! $NAME: build reported success but produced no nmvn-native(.exe) under $NMVN_OUT_DIR" >&2
       exit 1
     else
-      mv "$SCRIPT_DIR/nmvn-native" "$SCRIPT_DIR/$NAME"
-      printf '%s\n' "${GAVS[@]}" > "$SCRIPT_DIR/$NAME.plugins"
-      ACTUAL=$(du -m "$SCRIPT_DIR/$NAME" | cut -f1)
-      echo ">>> $NAME: ${ACTUAL}MB"
-      BUILT+=("$NAME	${ACTUAL}MB")
+      mv "$OUT_SRC" "$OUT_DST"
+      printf '%s\n' "${GAVS[@]}" > "$NMVN_OUT_DIR/$NAME.plugins"
+      ACTUAL=$(du -m "$OUT_DST" | cut -f1)
+      echo ">>> $OUT_DST: ${ACTUAL}MB"
+      BUILT+=("$OUT_DST	${ACTUAL}MB")
     fi
   else
     echo "!!! $NAME: build failed" >&2

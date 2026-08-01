@@ -23,12 +23,17 @@
 .DS_Store
 
 
+# Python (resolve_boot_catalog.py etc.)
+__pycache__/
+*.py[cod]
+*$py.class
+
 # nmvn (native-maven) build artifacts
+/build/
 /.prebuilt-work/
 /prebuilt-feature/classes/
 /prebuilt-feature/tool-classes/
-# every built image is nmvn-<something>: nmvn-native, nmvn-spring-4.1.0, ... (the nmvn
-# launcher script itself has no dash, so it stays tracked)
+# legacy root-level images (if any older local builds)
 /nmvn-*
 /lib*.dylib
 # GraalVM writes svm_err_b_*.md crash reports into the working directory

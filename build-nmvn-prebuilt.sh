@@ -21,7 +21,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
-MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
+
+# Layout (same local and CI — no env required):
+#   build/           — image binary + .plugins
+#   build/work/      — scratch (realms, javac, sidecar, sanitize)
+# Maven dist stays in apache-maven/target/ (not under build/).
+# Optional overrides: NMVN_OUT_DIR, NMVN_WORK_DIR, NMVN_MAVEN_HOME
+NMVN_OUT_DIR="${NMVN_OUT_DIR:-$SCRIPT_DIR/build}"
+NMVN_WORK_DIR="${NMVN_WORK_DIR:-$SCRIPT_DIR/build/work}"
+mkdir -p "$NMVN_OUT_DIR" "$NMVN_WORK_DIR"
+
+MAVEN_HOME="${NMVN_MAVEN_HOME:-$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT}"
 
 # ---------------------------------------------------------------------------------------------------
 # 0a) TOOLCHAIN = whatever is on PATH.
@@ -136,7 +146,7 @@ fi
 #    foreign core components (e.g. an old maven-core components.xml whose components require
 #    LifecycleStarter), which breaks injector creation at publication time.
 # ---------------------------------------------------------------------------------------------------
-WORK="$SCRIPT_DIR/.prebuilt-work"
+WORK="$NMVN_WORK_DIR"
 mkdir -p "$WORK"
 
 EXPORTED_ARTIFACTS=$(unzip -p "$MAVEN_HOME"/lib/maven-core-*.jar META-INF/maven/extension.xml \
@@ -321,14 +331,15 @@ done
 #     the metadata parser never resolves their names and the registration silently does not attach.
 #     A Feature runs on the builder JVM and registers the actual realm-loaded Class objects.
 # ---------------------------------------------------------------------------------------------------
-FEATURE_OUT="$SCRIPT_DIR/prebuilt-feature/classes"
+# Compile under NMVN_WORK_DIR (not prebuilt-feature/ in the repo) so source tree stays clean.
+FEATURE_OUT="$NMVN_WORK_DIR/prebuilt-feature-classes"
 rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # Build-time-ONLY tools, compiled OUTSIDE $FEATURE_OUT so they can never reach the sidecar jar and
 # with it the image classpath. SanitizeRealmJars calls JVMCI on purpose; -H:Preserve=package=nmvn.*
 # would make those methods reachable as image roots, the static jdk.vm.ci.runtime.JVMCI.runtime
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
-TOOLS_OUT="$SCRIPT_DIR/prebuilt-feature/tool-classes"
+TOOLS_OUT="$NMVN_WORK_DIR/prebuilt-feature-tools"
 rm -rf "$TOOLS_OUT" && mkdir -p "$TOOLS_OUT"
 # Runtime classes at --release 17 so the SAME jar also works on plain JVM Maven (running on 17+);
 # builder/image-only classes (Feature needs the org.graalvm.nativeimage module) compile separately.
@@ -346,12 +357,12 @@ javac --add-modules org.graalvm.nativeimage -cp "$CLASSPATH:$FEATURE_OUT" -d "$F
 # builder JDK, so it has no 17-compatibility obligation like the runtime classes above.
 javac -cp "$CLASSPATH:$FEATURE_OUT" -d "$TOOLS_OUT" \
   "$SCRIPT_DIR/prebuilt-feature/src/nmvn/SanitizeRealmJars.java"
-# Ship as a REAL jar in lib/ (with the sisu index declaring the @Priority cache overrides): lib
-# jars are what the image classpath glob, IncludeResources embedding, Preserve, and the container's
-# index scanning all handle canonically — and the same jar makes the sidecar work on JVM Maven.
+# Sidecar jar (sisu index + nmvn classes) lives under NMVN_WORK_DIR — not written into the Maven
+# dist tree — and is appended to the image classpath like any other lib jar.
 cp -R "$SCRIPT_DIR/prebuilt-feature/resources/." "$FEATURE_OUT/"
-(cd "$FEATURE_OUT" && jar cf "$MAVEN_HOME/lib/nmvn-sidecar.jar" nmvn META-INF)
-CLASSPATH="$CLASSPATH:$MAVEN_HOME/lib/nmvn-sidecar.jar"
+SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
+(cd "$FEATURE_OUT" && jar cf "$SIDECAR_JAR" nmvn META-INF)
+CLASSPATH="$CLASSPATH:$SIDECAR_JAR"
 
 # ---------------------------------------------------------------------------------------------------
 # 3) Sanitize realm jars: strip EnclosingMethod/Signature attributes whose reflective parsing
@@ -478,6 +489,6 @@ NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
   --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary,jdk.internal.jrtfs.SystemImage \
   --features=nmvn.PrebuiltReflectionFeature \
   nmvn.NmvnLauncher \
-  nmvn-native
+  "$NMVN_OUT_DIR/nmvn-native"
 
-echo ">>> Done: $SCRIPT_DIR/nmvn-native"
+echo ">>> Done: $NMVN_OUT_DIR/nmvn-native"

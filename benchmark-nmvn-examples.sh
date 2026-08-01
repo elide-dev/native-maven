@@ -67,7 +67,7 @@ fi
 
 if [ ! -x "$SCRIPT_DIR/$NMVN_BINARY_NAME" ]; then
   echo "Error: native binary not found/executable: $SCRIPT_DIR/$NMVN_BINARY_NAME" >&2
-  echo "       Build one first, e.g.: ./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json" >&2
+  echo "       Build one first, e.g.: ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json" >&2
   exit 1
 fi
 

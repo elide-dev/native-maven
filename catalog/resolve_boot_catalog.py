@@ -10,28 +10,24 @@ Pipeline
     probe POM (spring-boot-starter-parent) + effective-pom via dist Maven
             │
             ▼
-    catalog/nmvn-spring-<version>.json  →  ../build-nmvn-catalog.sh <catalog>  →  nmvn-spring-<version>
+    build/catalogs/nmvn-spring-<version>.json
+            │
+            ▼
+    ../build-nmvn-catalog.sh build/catalogs/nmvn-spring-<version>.json
+            │
+            ▼
+    build/nmvn-spring-<version>   (+ build/work/ scratch)
+
+Maven dist used for baking stays in apache-maven/target/ (not under build/).
 
 Product policy (current)
 ------------------------
 **One specialized binary** per Spring Boot version (`nmvn-spring-<version>`).
 
-Baked set = lifecycle plugins + spring-boot-maven-plugin (jar + war packaging).
-Plugins under outOfScope are not prebaked yet (same category for all — not dropped, and not
-permanently unbakeable): Vaadin, REST Docs, gRPC, SBOM, DGS, native, spring-cloud-contract,
-hibernate-maven-plugin. extensions=true plugins need more realm work later; still dynamic today.
-
-Normal Hibernate via spring-boot-starter-data-jpa needs no hibernate-maven-plugin and works.
-
-Build tool is always **Maven** (this is a Maven native binary catalog).
-
 Usage
 -----
-    ./resolve_boot_catalog.py --boot-version 4.1.0 --language java \\
-        --emit catalog/nmvn-spring-4.1.0.json
-
-    # then build (catalog path is required):
-    ../build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json
+    ./resolve_boot_catalog.py --boot-version 4.1.0 --language java
+    ../build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 """
 
 from __future__ import annotations
@@ -199,7 +195,9 @@ def write_probe_pom(path: Path, boot_version: str, language: str) -> None:
 
 def resolve_plugins(mvn: Path, boot_version: str, language: str) -> list[str]:
     """Return ordered g:a:v list for core plugins of this Boot line."""
-    work = REPO / ".prebuilt-work" / f"catalog-probe-{language}-{boot_version}"
+    # Probe POMs under build/work/ (same layout as build-nmvn-prebuilt scratch).
+    work_root = Path(os.environ.get("NMVN_WORK_DIR") or (REPO / "build" / "work"))
+    work = work_root / f"catalog-probe-{language}-{boot_version}"
     work.mkdir(parents=True, exist_ok=True)
     pom = work / "pom.xml"
     eff = work / "effective-pom.xml"
@@ -342,8 +340,8 @@ def main() -> None:
         "--emit",
         default=None,
         help=(
-            "Write catalog JSON here (recommended: catalog/nmvn-spring-<bootVersion>.json). "
-            "Default when not --print-only: catalog/nmvn-spring-<bootVersion>.json next to this script"
+            "Write catalog JSON here. "
+            "Default: <repo>/build/catalogs/nmvn-spring-<bootVersion>.json"
         ),
     )
     ap.add_argument(
@@ -381,7 +379,7 @@ def main() -> None:
         file=sys.stderr,
     )
 
-    default_emit = HERE / f"nmvn-spring-{boot}.json"
+    default_emit = REPO / "build" / "catalogs" / f"nmvn-spring-{boot}.json"
 
     if args.print_only and not args.emit:
         json.dump(catalog, sys.stdout, indent=2)
@@ -393,18 +391,20 @@ def main() -> None:
         write_json(emit_path, catalog)
 
     if not args.print_only:
-        cat_arg = str(Path(args.emit).resolve() if args.emit else default_emit)
-        if args.emit and not Path(args.emit).is_absolute():
-            cat_arg = str((Path.cwd() / args.emit).resolve())
-        # Prefer a path relative to repo root when under REPO for a shorter "Next" hint.
+        if args.emit:
+            cat_path = Path(args.emit)
+            if not cat_path.is_absolute():
+                cat_path = (Path.cwd() / cat_path).resolve()
+        else:
+            cat_path = default_emit
         try:
-            cat_hint = str(Path(cat_arg).resolve().relative_to(REPO))
+            cat_hint = str(cat_path.resolve().relative_to(REPO))
         except ValueError:
-            cat_hint = cat_arg
+            cat_hint = str(cat_path)
         print(
             "\nNext: build the native image from this catalog:\n"
             f"  ./build-nmvn-catalog.sh {cat_hint}\n"
-            f"  # from repo root; binary: {catalog['binary']}",
+            f"  # from repo root; binary → build/{catalog['binary']}",
             file=sys.stderr,
         )
 

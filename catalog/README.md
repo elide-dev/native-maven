@@ -1,125 +1,91 @@
 # nmvn catalog — resolve Boot version, then build the specialized image
 
-## Product pipeline
+## Product pipeline (local == CI)
 
 ```text
   Spring Boot version + language  (build tool = Maven always)
               │
               ▼
-  resolve_boot_catalog.py   →  catalog.json
+  resolve_boot_catalog.py
               │
               ▼
-  build-nmvn-catalog.sh     →  build-nmvn-prebuilt.sh  →  nmvn-spring-<bootVersion>
+  build/catalogs/nmvn-spring-<boot>.json
+              │
+              ▼
+  build-nmvn-catalog.sh  →  build-nmvn-prebuilt.sh
+              │
+              ▼
+  build/nmvn-spring-<boot>
+  build/work/          (scratch)
 ```
 
-**One specialized binary** per Spring Boot version: **`nmvn-spring-<bootVersion>`**  
-(e.g. `nmvn-spring-4.1.0`). No core/full matrix, no separate Initializr image.
+**Maven dist stays in** `apache-maven/target/` (not under `build/`).
+
+**One specialized binary** per Spring Boot version: **`nmvn-spring-<bootVersion>`**.
 
 ---
 
 ## Prerequisites
 
-1. **Maven for resolution** (pins plugin versions from the Boot parent):
+1. **Maven dist** (version fidelity with the baked image):
    ```bash
-   # Prefer the repo dist (version fidelity with the baked image)
    mvn clean package -DskipTests -Drat.skip=true
-   # → apache-maven/target/apache-maven-4.1.0-SNAPSHOT/bin/mvn
+   # → apache-maven/target/apache-maven-4.1.0-SNAPSHOT/
    ```
-   Or any `mvn` on `PATH` (works; may differ slightly from the baked image).
 
 2. **Resolvable** `spring-boot-starter-parent:<boot-version>` (network or local `.m2`).
 
-3. **Native-image build:** GraalVM toolchain as required by `build-nmvn-prebuilt.sh`
-   (large RAM; tens of minutes per image).
+3. **`native-image` on PATH** (GraalVM with Crema: `RuntimeClassLoading`, `GraalJITCompileAtRuntime`).
 
 ---
 
-## Step 1 — Generate the catalog
-
-Keep **one catalog file per Spring Boot version** (recommended naming):
+## Local build (same as CI)
 
 ```bash
 # From repo root
-./catalog/resolve_boot_catalog.py \
-  --boot-version 4.1.0 \
-  --language java \
-  --emit catalog/nmvn-spring-4.1.0.json
-```
+./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
+# → build/catalogs/nmvn-spring-4.1.0.json
+# → build/work/catalog-probe-…  (scratch)
 
-Default emit (if you omit `--emit`) is `catalog/nmvn-spring-<bootVersion>.json`.
-
-| Flag | Meaning |
-|------|---------|
-| `--boot-version` | Spring Boot version (`spring-boot-starter-parent`) |
-| `--language` | `java` / `kotlin` / `groovy` — metadata; **does not** change the binary name |
-| `--build-tool` | Always `maven` |
-| `--emit PATH` | Where to write the catalog JSON |
-| `--plugins-only` | Print resolved plugin GAVs only |
-| `--print-only` | Print catalog JSON to stdout |
-
-### What the resolver does
-
-1. Writes a probe POM under `spring-boot-starter-parent:<version>` with the baked plugins (no versions).
-2. Runs Maven `help:effective-pom` to pin versions from the parent (and super POM where needed).
-3. Writes the catalog: `binary`, `plugins`, `outOfScope`, `binaries[]`.
-
----
-
-## Step 2 — Build the specialized native image
-
-**Catalog path is required** (no default — you may have many Boot-line catalogs):
-
-```bash
-./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json --dry-run
-./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json
-# → ./nmvn-spring-4.1.0
-# → ./nmvn-spring-4.1.0.plugins
-```
-
-| Argument / flag | Meaning |
-|-----------------|---------|
-| **`<catalog.json>`** | **Required.** Path to a catalog for one Boot version |
-| `--only NAME` | Build only that binary name |
-| `--dry-run` | List plugins; no native-image |
-| `-h` / `--help` | Usage + create-catalog example |
-
-### End-to-end
-
-```bash
-# From native-maven repo root
-./catalog/resolve_boot_catalog.py \
-  --boot-version 4.1.0 \
-  --language java \
-  --emit catalog/nmvn-spring-4.1.0.json
-
-./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json --dry-run
-./build-nmvn-catalog.sh catalog/nmvn-spring-4.1.0.json
+./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json --dry-run
+./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+# → build/nmvn-spring-4.1.0
+# → build/nmvn-spring-4.1.0.plugins
+# → build/work/…  (scratch)
 ```
 
 Multiple Boot versions:
 
 ```bash
-./catalog/resolve_boot_catalog.py --boot-version 3.5.0 --language java \
-  --emit catalog/nmvn-spring-3.5.0.json
-./build-nmvn-catalog.sh catalog/nmvn-spring-3.5.0.json
+./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
+./catalog/resolve_boot_catalog.py --boot-version 4.0.7 --language java
+./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.0.7.json
+# → build/nmvn-spring-4.1.0
+# → build/nmvn-spring-4.0.7
 ```
+
+| Flag | Meaning |
+|------|---------|
+| `--boot-version` | Spring Boot version |
+| `--language` | Metadata only (`java` / `kotlin` / `groovy`) |
+| `--emit PATH` | Optional catalog path (default: `build/catalogs/nmvn-spring-<boot>.json`) |
+| `--plugins-only` / `--print-only` | Debug only |
+
+`build-nmvn-catalog.sh` requires the catalog path; output always under **`build/`** by default.
 
 ---
 
-## What remains in the tree (product)
+## Layout
 
 | Path | Role |
 |------|------|
-| **`catalog/resolve_boot_catalog.py`** | Boot version → `catalog.json` |
-| **`catalog/nmvn-spring-*.json`** | One generated catalog per Boot version |
-| **`catalog/README.md`** | This doc |
-| **`build-nmvn-catalog.sh`** | Catalog → invoke prebuilt builder per entry |
-| **`build-nmvn-prebuilt.sh`** | Actual GraalVM native-image with prebaked plugin realms |
-| **`build-nmvn-for-pom.sh`** | Optional: specialize an image for **one** project POM (not the product catalog path) |
+| **`build/catalogs/`** | Generated catalogs |
+| **`build/work/`** | Scratch (probes, realms, javac, sanitize) |
+| **`build/nmvn-spring-*`** | Specialized native binaries |
+| **`apache-maven/target/`** | Maven distribution used for bake (unchanged) |
 
-**Removed / not used on the product path:** multi-tier Initializr / spring one-shot builders and
-multi-binary planners (`build-nmvn-for-initializr`, `build-nmvn-for-spring`, `plan_catalog`,
-`nmvn_select`).
+No env vars required. Optional overrides still exist (`NMVN_OUT_DIR`, `NMVN_WORK_DIR`, `NMVN_MAVEN_HOME`) if you need them.
 
 ---
 
@@ -127,10 +93,7 @@ multi-binary planners (`build-nmvn-for-initializr`, `build-nmvn-for-spring`, `pl
 
 | | |
 |--|--|
-| **Binary** | `nmvn-spring-<bootVersion>` |
-| **Baked** | Lifecycle + `spring-boot-maven-plugin` (jar + war); versions from Boot parent |
-| **outOfScope** | Not currently prebaked (Vaadin, REST Docs, gRPC, SBOM, DGS, native, spring-cloud-contract, hibernate enhance) — dynamic if present; not permanently unbakeable |
-| **Hibernate without native** | Works via `spring-boot-starter-data-jpa` (library) |
+| **Binary** | `nmvn-spring-<bootVersion>` under `build/` |
+| **Baked** | Lifecycle + `spring-boot-maven-plugin` (jar + war) |
+| **outOfScope** | Not currently prebaked (Vaadin, native, hibernate enhance, …) |
 | **Elide fallback** | Hard-coded `nmvn-native` if specialized binary is missing |
-
-Elide ships a copy of the catalog as `nmvn-catalog.json` and installs the matching specialized binary.
