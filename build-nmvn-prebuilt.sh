@@ -24,48 +24,56 @@ TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
 MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
 
 # ---------------------------------------------------------------------------------------------------
-# 0a) PIN THE TOOLCHAIN. This image needs DEVELOPMENT options — -H:+RuntimeClassLoading (Crema) and
-#     -H:+GraalJITCompileAtRuntime — that exist only in a GraalVM built from source. A stock release
-#     does not have them, and neither does a newer dev build where they were renamed, so inheriting
-#     whatever happens to be on PATH silently decides whether the build can work at all.
+# 0a) TOOLCHAIN = whatever is on PATH.
 #
-#     Pinning here buys two things: the produced image no longer depends on which shell launched the
-#     build (it must not — a per-pom build service has to be reproducible), and a wrong toolchain
-#     fails IMMEDIATELY with an explanation instead of surfacing as "Unrecognized option
-#     '-H:+GraalJITCompileAtRuntime'" after the plugin-resolution and link-probe phases have already
-#     run. JAVA_HOME/PATH are exported so native-image, javac and java (SanitizeRealmJars needs
-#     java.lang.classfile plus JVMCI) all come from the same JDK as the image builder.
+#     Needs native-image with DEVELOPMENT options used by baked realms:
+#       -H:+RuntimeClassLoading (Crema)
+#       -H:+GraalJITCompileAtRuntime
+#     Those are not on every GraalVM release; fail fast with a clear message if missing so we do
+#     not burn tens of minutes resolving plugins before native-image rejects the flags.
 #
-#     Override with: NMVN_GRAALVM_HOME=/path/to/graalvm/Contents/Home
+#     Put the right Graal/JDK first on PATH (CI: graalvm/setup-graalvm). No JAVA_HOME / NMVN_* pin.
 # ---------------------------------------------------------------------------------------------------
-NMVN_GRAALVM_HOME="${NMVN_GRAALVM_HOME:-$HOME/Developer/graal/sdk/mxbuild/darwin-aarch64/GRAALVM_COMMUNITY_JAVA25/graalvm-community-25.3.4-dev+7.1/Contents/Home}"
-
-if [ ! -x "$NMVN_GRAALVM_HOME/bin/native-image" ]; then
-  echo "Error: no native-image at $NMVN_GRAALVM_HOME/bin/native-image"
-  echo "       Set NMVN_GRAALVM_HOME to a GraalVM built from source, e.g."
-  echo "       ~/Developer/graal/sdk/mxbuild/<platform>/GRAALVM_COMMUNITY_JAVA25/graalvm-community-*/Contents/Home"
+if ! command -v native-image >/dev/null 2>&1; then
+  echo "Error: native-image not found on PATH."
+  echo "       Install a GraalVM (or other JDK) with native-image and ensure it is on PATH."
+  echo "       Example: export PATH=/path/to/graalvm/bin:\$PATH"
   exit 1
 fi
 
-export JAVA_HOME="$NMVN_GRAALVM_HOME"
-export PATH="$JAVA_HOME/bin:$PATH"
+NATIVE_IMAGE="$(command -v native-image)"
+# Prefer a real path for the log line (symlinks on some installs).
+if command -v realpath >/dev/null 2>&1; then
+  NATIVE_IMAGE="$(realpath "$NATIVE_IMAGE" 2>/dev/null || echo "$NATIVE_IMAGE")"
+elif command -v readlink >/dev/null 2>&1; then
+  NATIVE_IMAGE="$(readlink -f "$NATIVE_IMAGE" 2>/dev/null || echo "$NATIVE_IMAGE")"
+fi
 
-EXPERT_OPTIONS="$(native-image --expert-options-all 2>&1 || true)"
+if ! command -v java >/dev/null 2>&1; then
+  echo "Error: java not found on PATH (needed for realm sanitize / link probe)."
+  echo "       Put the same JDK that provides native-image on PATH."
+  exit 1
+fi
+
+EXPERT_OPTIONS="$("$NATIVE_IMAGE" --expert-options-all 2>&1 || true)"
 # Matched with a shell 'case', NOT 'printf ... | grep -q': grep -q exits on the first match and closes
 # the pipe, printf then dies of SIGPIPE, and under 'set -o pipefail' the pipeline reports THAT failure
 # — so a successful match would look like a missing option and every toolchain would be rejected.
 for required in RuntimeClassLoading GraalJITCompileAtRuntime; do
   if case "$EXPERT_OPTIONS" in *"$required"*) false ;; *) true ;; esac; then
-    echo "Error: this toolchain does not support -H:±$required, which nmvn's baked realms depend on:"
-    echo "         $(native-image --version 2>&1 | head -1)"
-    echo "         NMVN_GRAALVM_HOME=$NMVN_GRAALVM_HOME"
-    echo "       Point NMVN_GRAALVM_HOME at a GraalVM with Crema/runtime-class-loading support."
+    echo "Error: this native-image does not support -H:±$required"
+    echo "       (required for nmvn prebaked plugin realms / Crema):"
+    echo "         path:    $NATIVE_IMAGE"
+    echo "         version: $($NATIVE_IMAGE --version 2>&1 | head -1)"
+    echo "       Use a GraalVM build that includes RuntimeClassLoading and"
+    echo "       GraalJITCompileAtRuntime, and put its bin/ first on PATH."
     exit 1
   fi
 done
 
-echo ">>> Toolchain: $(native-image --version 2>&1 | head -1)"
-echo ">>>            $JAVA_HOME"
+echo ">>> native-image: $NATIVE_IMAGE"
+echo ">>>               $($NATIVE_IMAGE --version 2>&1 | head -1)"
+echo ">>> java:         $(command -v java)"
 
 # Baked ("supported") plugins. Versions MUST match what builds will request (explicit pins or the
 # default lifecycle bindings of this Maven snapshot) — prebuiltFor falls back to dynamic resolution
@@ -416,7 +424,7 @@ echo ">>> Building native image ..."
 # bulk plugins / bulk reflection over only raising this.
 NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
 
-native-image \
+"$NATIVE_IMAGE" \
   -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE" \
   -classpath "$CLASSPATH" \
   -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \
