@@ -314,8 +314,7 @@ public final class PrebuiltPluginRealms {
      * Re-enables the old whole-constant-pool closure requirement ({@code -Dnmvn.prebuilt.strictClosure=true}).
      * Only needed if {@link SelfFirstRealm}'s escape from forced link-at-build-time ever stops holding.
      */
-    private static final boolean STRICT_CLOSURE =
-            Boolean.getBoolean("nmvn.prebuilt.strictClosure");
+    private static final boolean STRICT_CLOSURE = Boolean.getBoolean("nmvn.prebuilt.strictClosure");
 
     /**
      * The {@code <exportedPackage>} entries of every {@code META-INF/maven/extension.xml} on the image
@@ -402,8 +401,7 @@ public final class PrebuiltPluginRealms {
         for (String entry : splitPluginEntries(spec)) {
             int eq = entry.indexOf('=');
             if (eq < 0) {
-                throw new IllegalArgumentException(
-                        "Malformed nmvn.prebuilt.plugins entry: " + entry);
+                throw new IllegalArgumentException("Malformed nmvn.prebuilt.plugins entry: " + entry);
             }
             // Left of '=' is "groupId:artifactId:version" optionally followed by
             // "|<canonical per-plugin dependencies>" (see Prebuilt.dependencyKey).
@@ -1188,8 +1186,7 @@ public final class PrebuiltPluginRealms {
             try {
                 return java.nio.file.Files.readString(java.nio.file.Path.of(file));
             } catch (Exception e) {
-                throw new IllegalStateException(
-                        "Cannot read nmvn.prebuilt.pluginsFile=" + file, e);
+                throw new IllegalStateException("Cannot read nmvn.prebuilt.pluginsFile=" + file, e);
             }
         }
         return System.getProperty("nmvn.prebuilt.plugins");
