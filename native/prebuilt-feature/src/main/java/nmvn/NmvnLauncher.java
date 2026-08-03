@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.maven.org.apache.maven.nmvn.features.features;
+package nmvn;
 
 import org.apache.maven.cling.MavenCling;
 import org.codehaus.plexus.classworlds.ClassWorld;
@@ -68,12 +68,12 @@ public final class NmvnLauncher {
                 indexes++;
                 try (java.io.InputStream in = url.openStream()) {
                     if (new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-                            .contains("org.apache.maven.nmvn.features.")) {
+                            .contains("nmvn.")) {
                         nmvnIndexes++;
                     }
                 }
             }
-            Class<?> cache = Class.forName("org.apache.maven.nmvn.features.PrebuiltPluginDescriptorCache");
+            Class<?> cache = Class.forName("nmvn.PrebuiltPluginDescriptorCache");
             System.err.println("nmvn diag: sisu indexes visible=" + indexes + " (containing nmvn entries="
                     + nmvnIndexes + "), cache @Named=" + (cache.getAnnotation(javax.inject.Named.class) != null)
                     + " @Priority=" + (cache.getAnnotation(org.eclipse.sisu.Priority.class) != null));

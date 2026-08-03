@@ -602,16 +602,16 @@ echo ">>> Image/javac classpath: $(echo "$CLASSPATH" | tr "$CP_SEP" '\n' | wc -l
 FEATURE_OUT="$NMVN_WORK_DIR/prebuilt-feature-classes"
 rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # Build-time-ONLY tools, compiled OUTSIDE $FEATURE_OUT so they can never reach the sidecar jar and
-# with it the image classpath. SanitizeRealmJars calls JVMCI on purpose; -H:Preserve=package=org.apache.maven.nmvn.features.*
+# with it the image classpath. SanitizeRealmJars calls JVMCI on purpose; -H:Preserve=package=nmvn.*
 # would make those methods reachable as image roots, the static jdk.vm.ci.runtime.JVMCI.runtime
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
 
 # use Maven to prepare the prebuilt-feature JAR
-$MAVEN_HOME/bin/mvn -pl native/prebuilt-feature/ package -am -DskipTests
+$MAVEN_HOME/bin/mvn -q -pl native/prebuilt-feature/ package -am -DskipTests
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
-cp native/prebuilt-feature/target/prebuilt-feature-4.1.0.jar "$SIDECAR_JAR"
+cp native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
 # ---------------------------------------------------------------------------------------------------
@@ -672,20 +672,20 @@ java \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
   -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}" \
-  org.apache.maven.nmvn.features.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
+  nmvn.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
 fi
 
 # ---------------------------------------------------------------------------------------------------
 # 4) Build the image.
 #    Key prebuilt flags:
-#      -Dorg.apache.maven.nmvn.features.prebuilt.pluginsFile=... feeds newline-separated realm specs to PrebuiltPluginRealms
+#      -Dnmvn.prebuilt.pluginsFile=... feeds newline-separated realm specs to PrebuiltPluginRealms
 #      --initialize-at-build-time=PrebuiltPluginRealms,...classworlds
 #                                    runs that initializer at build time and snapshots the realms
 # ---------------------------------------------------------------------------------------------------
 echo ">>> Building native image ..."
 #native-image \
 #  -classpath "$CLASSPATH" \
-#  -Dorg.apache.maven.nmvn.features.prebuilt.plugins="$PREBUILT_SPEC" \
+#  -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \
 #  -Dguice_bytecode_gen_option=DISABLED \
 #  -march=native \
 #  --no-fallback \
@@ -713,7 +713,7 @@ echo ">>> Building native image ..."
 #  --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
 #  --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
 #  --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
-#  '--initialize-at-build-time=org.apache.maven.nmvn.features.PrebuiltPluginRealms,org.apache.maven.nmvn.features.PrebuiltPluginRealms$Prebuilt,org.apache.maven.nmvn.features.PrebuiltPluginRealms$BakedClassLoader,org.apache.maven.plugin.descriptor,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
+#  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,org.apache.maven.plugin.descriptor,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
 #  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary,jdk.internal.jrtfs.SystemImage \
 #  org.codehaus.plexus.classworlds.launcher.Launcher \
 #  nmvn-native
@@ -735,8 +735,8 @@ NMVN_MAX_RAM_PERCENTAGE="${NMVN_MAX_RAM_PERCENTAGE:-80.0}"
 PREBUILT_ARGS=()
 if [ "${#PLUGINS[@]}" -gt 0 ]; then
   PREBUILT_ARGS=(
-    -Dorg.apache.maven.nmvn.features.prebuilt.pluginsFile="$(to_cp_path "$SPEC_FILE")"
-    -Dorg.apache.maven.nmvn.features.prebuilt.unlinkable="$(to_cp_path "$WORK/unlinkable.txt")"
+    -Dnmvn.prebuilt.pluginsFile="$(to_cp_path "$SPEC_FILE")"
+    -Dnmvn.prebuilt.unlinkable="$(to_cp_path "$WORK/unlinkable.txt")"
   )
 fi
 
@@ -767,7 +767,7 @@ NATIVE_IMAGE_ARGS=(
   -H:Preserve=package=org.eclipse.aether.*
   -H:Preserve=package=org.slf4j.*
   -H:Preserve=package=org.codehaus.plexus.*
-  -H:Preserve=package=org.apache.maven.nmvn.features.*
+  -H:Preserve=package=nmvn.*
   -H:Preserve=package=com.google.inject.*
   -H:Preserve=package=com.google.common.*
   -H:Preserve=package=org.eclipse.sisu.*
@@ -788,7 +788,7 @@ NATIVE_IMAGE_ARGS=(
   --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED
   --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
   --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
-  '--initialize-at-build-time=org.apache.maven.nmvn.features.PrebuiltPluginRealms,org.apache.maven.nmvn.features.PrebuiltPluginRealms$Prebuilt,org.apache.maven.nmvn.features.PrebuiltPluginRealms$BakedClassLoader,org.apache.maven.nmvn.features.PrebuiltPluginRealms$SelfFirstRealm,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool'
+  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,nmvn.PrebuiltPluginRealms$SelfFirstRealm,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool'
   # The whole jline ffm PACKAGE, not just CLibrary: nested types are separate classes, so naming the
   # outer class leaves CLibrary$termios build-time-initialized (SVM initializes JDK classes at build
   # time by default) — and on Windows its <clinit> throws "Unsupported system!" because the FFM
@@ -796,8 +796,8 @@ NATIVE_IMAGE_ARGS=(
   # sibling that would trip next; at run time jline probes providers and falls back, exactly as it
   # does on HotSpot Windows today.
   --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm,jdk.internal.jrtfs.SystemImage
-  --features=org.apache.maven.nmvn.features.PrebuiltReflectionFeature
-  org.apache.maven.nmvn.features.NmvnLauncher
+  --features=nmvn.PrebuiltReflectionFeature
+  nmvn.NmvnLauncher
   "$(to_cp_path "$NMVN_OUT_DIR/nmvn-native")"
 )
 

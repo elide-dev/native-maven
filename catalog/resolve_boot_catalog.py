@@ -223,7 +223,7 @@ def write_probe_pom(path: Path, boot_version: str, language: str) -> None:
     <version>{boot_version}</version>
     <relativePath/>
   </parent>
-  <groupId>org.apache.maven.nmvn.features.catalog</groupId>
+  <groupId>nmvn.catalog</groupId>
   <artifactId>boot-probe-{language}</artifactId>
   <version>1</version>
   <packaging>jar</packaging>

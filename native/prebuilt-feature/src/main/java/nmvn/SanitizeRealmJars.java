@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.maven.org.apache.maven.nmvn.features.features;
+package nmvn;
 
 import java.io.File;
 import java.lang.classfile.ClassFile;
@@ -67,12 +67,12 @@ import java.util.jar.JarOutputStream;
  * baked realm (same classworlds ClassRealm, null base loader, system loader as strategy parent —
  * the tool runs with the image classpath on -cp) attempts the very JVMCI
  * {@code ResolvedJavaType.link()} that SVM performs on registered classes. Classes that fail are
- * written to the unlinkable list, which PrebuiltPluginRealms reads (-Dorg.apache.maven.nmvn.features.prebuilt.unlinkable)
+ * written to the unlinkable list, which PrebuiltPluginRealms reads (-Dnmvn.prebuilt.unlinkable)
  * to drop them from the baked map. The probe runs HERE, in a throwaway JVM, because touching
  * JVMCI from image-baked code makes the JVMCIRuntime singleton heap-reachable, which SVM rejects
  * ("JVMCIRuntime should not appear in the image").
  *
- * <p>Usage: {@code java -XX:+EnableJVMCI --add-exports... org.apache.maven.nmvn.features.SanitizeRealmJars <spec-file>
+ * <p>Usage: {@code java -XX:+EnableJVMCI --add-exports... nmvn.SanitizeRealmJars <spec-file>
  * <out-dir> <unlinkable-out> [spec-out]} — reads a newline-separated
  * {@code g:a:v=jar{pathSep}jar...} realm spec (entry separator is newline, NOT {@code ';'},
  * because on Windows {@link File#pathSeparator} is {@code ';'} and would split jar paths

@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.maven.org.apache.maven.nmvn.features.features;
+package nmvn;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -91,7 +91,7 @@ import org.codehaus.plexus.component.repository.ComponentDescriptor;
  * ORDER MATTERS when pinning: sisu's {@code ComponentDescriptor.setRealm(...)} nulls the cached
  * implementation class, so {@code setRealm} must precede {@code setImplementationClass}.
  *
- * <p><b>Configuration.</b> {@code -Dorg.apache.maven.nmvn.features.prebuilt.plugins} (or {@code -Dorg.apache.maven.nmvn.features.prebuilt.pluginsFile})
+ * <p><b>Configuration.</b> {@code -Dnmvn.prebuilt.plugins} (or {@code -Dnmvn.prebuilt.pluginsFile})
  * is a <em>newline</em>-separated list of
  * {@code groupId:artifactId:version=jar1{File.pathSeparator}jar2...} entries (first jar = plugin
  * artifact, rest = resolved runtime classpath). Newlines are required because on Windows
@@ -311,11 +311,11 @@ public final class PrebuiltPluginRealms {
     }
 
     /**
-     * Re-enables the old whole-constant-pool closure requirement ({@code -Dorg.apache.maven.nmvn.features.prebuilt.strictClosure=true}).
+     * Re-enables the old whole-constant-pool closure requirement ({@code -Dnmvn.prebuilt.strictClosure=true}).
      * Only needed if {@link SelfFirstRealm}'s escape from forced link-at-build-time ever stops holding.
      */
     private static final boolean STRICT_CLOSURE =
-            Boolean.getBoolean("org.apache.maven.nmvn.features.prebuilt.strictClosure");
+            Boolean.getBoolean("nmvn.prebuilt.strictClosure");
 
     /**
      * The {@code <exportedPackage>} entries of every {@code META-INF/maven/extension.xml} on the image
@@ -394,7 +394,7 @@ public final class PrebuiltPluginRealms {
     private static String buildAll(ClassWorld world, ClassRealm core) throws Exception {
         String spec = loadPluginsSpec();
         if (spec == null || spec.isBlank()) {
-            return "no org.apache.maven.nmvn.features.prebuilt.plugins set — registry empty";
+            return "no nmvn.prebuilt.plugins set — registry empty";
         }
 
         Map<String, Set<String>> unlinkableAll = loadUnlinkable();
@@ -403,7 +403,7 @@ public final class PrebuiltPluginRealms {
             int eq = entry.indexOf('=');
             if (eq < 0) {
                 throw new IllegalArgumentException(
-                        "Malformed org.apache.maven.nmvn.features.prebuilt.plugins entry: " + entry);
+                        "Malformed nmvn.prebuilt.plugins entry: " + entry);
             }
             // Left of '=' is "groupId:artifactId:version" optionally followed by
             // "|<canonical per-plugin dependencies>" (see Prebuilt.dependencyKey).
@@ -730,11 +730,11 @@ public final class PrebuiltPluginRealms {
 
     /**
      * Per-plugin class names that failed the SanitizeRealmJars link probe, from the file named by
-     * {@code -Dorg.apache.maven.nmvn.features.prebuilt.unlinkable} (lines: {@code g:a:v<TAB>className}). Absent on plain
+     * {@code -Dnmvn.prebuilt.unlinkable} (lines: {@code g:a:v<TAB>className}). Absent on plain
      * JVM runs — there the realms are live and linking stays lazy.
      */
     private static Map<String, Set<String>> loadUnlinkable() {
-        String path = System.getProperty("org.apache.maven.nmvn.features.prebuilt.unlinkable");
+        String path = System.getProperty("nmvn.prebuilt.unlinkable");
         if (path == null) {
             return Map.of();
         }
@@ -1179,20 +1179,20 @@ public final class PrebuiltPluginRealms {
     }
 
     /**
-     * Load the prebuilt plugins spec from {@code -Dorg.apache.maven.nmvn.features.prebuilt.pluginsFile} (preferred; avoids
-     * huge / multiline {@code -D} values on Windows) or {@code -Dorg.apache.maven.nmvn.features.prebuilt.plugins}.
+     * Load the prebuilt plugins spec from {@code -Dnmvn.prebuilt.pluginsFile} (preferred; avoids
+     * huge / multiline {@code -D} values on Windows) or {@code -Dnmvn.prebuilt.plugins}.
      */
     private static String loadPluginsSpec() {
-        String file = System.getProperty("org.apache.maven.nmvn.features.prebuilt.pluginsFile");
+        String file = System.getProperty("nmvn.prebuilt.pluginsFile");
         if (file != null && !file.isBlank()) {
             try {
                 return java.nio.file.Files.readString(java.nio.file.Path.of(file));
             } catch (Exception e) {
                 throw new IllegalStateException(
-                        "Cannot read org.apache.maven.nmvn.features.prebuilt.pluginsFile=" + file, e);
+                        "Cannot read nmvn.prebuilt.pluginsFile=" + file, e);
             }
         }
-        return System.getProperty("org.apache.maven.nmvn.features.prebuilt.plugins");
+        return System.getProperty("nmvn.prebuilt.plugins");
     }
 
     /**
@@ -1226,7 +1226,7 @@ public final class PrebuiltPluginRealms {
         return entries;
     }
 
-    /** Separates the GAV from the canonical dependency key inside one {@code org.apache.maven.nmvn.features.prebuilt.plugins} entry. */
+    /** Separates the GAV from the canonical dependency key inside one {@code nmvn.prebuilt.plugins} entry. */
     private static final char DEPENDENCY_SEPARATOR = '|';
 
     /**
@@ -1286,7 +1286,7 @@ public final class PrebuiltPluginRealms {
 
     /**
      * Canonical, order-independent encoding of a plugin's {@code <dependencies>}, used on both sides of
-     * the routing comparison: the build script emits it into {@code org.apache.maven.nmvn.features.prebuilt.plugins} from the
+     * the routing comparison: the build script emits it into {@code nmvn.prebuilt.plugins} from the
      * effective pom, and the caches compute it here from the runtime model. Encoding MUST stay in sync
      * with the {@code canonical_dependencies} helper in build-nmvn-for-pom.sh.
      *
