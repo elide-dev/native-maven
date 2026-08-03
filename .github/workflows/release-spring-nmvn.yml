@@ -1,9 +1,13 @@
-# Build specialized Spring Boot nmvn native images (nmvn-spring-<bootVersion>) per platform.
+# Build nmvn native images per platform:
+#   - specialized Spring Boot images (nmvn-spring-<bootVersion>), plugin set from the catalog
+#   - one generic image (nmvn-generic) baking only Maven's DEFAULT lifecycle plugin versions —
+#     what a project with no version-pinning parent requests; the versions are resolved from
+#     the dist's maven-core jar by build-nmvn-generic.sh, not hardcoded
 #
 # Same commands as local. Scripts write under build/ by default:
 #   build/catalogs/   — catalogs
 #   build/work/       — scratch
-#   build/nmvn-spring-* — images
+#   build/nmvn-spring-*, build/nmvn-generic — images
 # Maven dist stays in apache-maven/target/.
 #
 # Toolchain: download GraalVM CE 25.2.4, set JAVA_HOME (+ bin on PATH). Finding native-image
@@ -11,6 +15,8 @@
 #
 # Per platform, for Boot 4.1.0 and 4.0.7:
 #   resolve_boot_catalog.py → build-nmvn-catalog.sh → zip to dist/
+# then the generic image:
+#   build-nmvn-generic.sh → zip to dist/
 #
 name: Build Spring Native Maven
 
@@ -125,10 +131,10 @@ jobs:
           chmod +x ./mvnw
           ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
 
-      - name: Resolve catalogs and build Spring specialized images
+      - name: Resolve catalogs and build Spring specialized + generic images
         run: |
           set -euo pipefail
-          chmod +x catalog/resolve_boot_catalog.py build-nmvn-catalog.sh build-nmvn-prebuilt.sh
+          chmod +x catalog/resolve_boot_catalog.py build-nmvn-catalog.sh build-nmvn-prebuilt.sh build-nmvn-generic.sh
 
           # Fresh build tree (same layout as local defaults).
           rm -rf build dist
@@ -172,6 +178,29 @@ jobs:
             package_zip "dist/${ZIP}" "${BIN}" "${PLUGINS}"
             echo ">>> Packaged dist/${ZIP}"
           done
+
+          echo "=========================================="
+          echo ">>> Generic image (Maven default lifecycle plugins)"
+          echo "=========================================="
+
+          # Plugin versions are resolved from the dist's maven-core jar by the script itself
+          # (default lifecycle bindings — what a project without a version-pinning parent
+          # requests), so there is nothing to keep in sync here when the bindings are bumped.
+          ./build-nmvn-generic.sh
+
+          GENERIC_BIN="build/nmvn-generic"
+          if [ -f "${GENERIC_BIN}.exe" ]; then
+            GENERIC_BIN="${GENERIC_BIN}.exe"
+          fi
+          if [ ! -f "${GENERIC_BIN}" ]; then
+            echo "::error::Expected binary ${GENERIC_BIN} after generic build"
+            ls -la build/ || true
+            exit 1
+          fi
+
+          ZIP="nmvn-generic-${{ matrix.platform }}-${{ github.sha }}.zip"
+          package_zip "dist/${ZIP}" "${GENERIC_BIN}" build/nmvn-generic.plugins
+          echo ">>> Packaged dist/${ZIP}"
 
           ls -la dist/
 
