@@ -661,6 +661,8 @@ for n, line in enumerate(lines, 1):
 print(f">>>   {len(lines)} plugin realm(s)")
 PY
 echo ">>> Sanitizing realm jars + link probe ..."
+# use Maven to prepare the sanitizing JAR
+$MAVEN_HOME/bin/mvn -q -pl native/sanitize/ package -am -DskipTests
 # JVMCI flags: the tool runs the SAME ResolvedJavaType.link() SVM runs on registered classes,
 # against an exact replica of each baked realm; failures land in unlinkable.txt and are dropped
 # from the baked maps (see PrebuiltPluginRealms.loadAllClasses). Runs in this throwaway JVM
@@ -671,8 +673,8 @@ java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
-  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}" \
-  nmvn.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
+  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}native/sanitize/target/sanitize-4.1.0*.jar" \
+  org.apache.maven.sanitize.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
 fi
 
 # ---------------------------------------------------------------------------------------------------

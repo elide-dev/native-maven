@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package nmvn;
+package org.apache.maven.sanitize;
 
 import java.io.File;
 import java.lang.classfile.ClassFile;

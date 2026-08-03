@@ -11,6 +11,7 @@
   <name>Native Maven</name>
   <modules>
     <module>prebuilt-feature</module>
+    <module>sanitize</module>
   </modules>
   <build>
     <plugins>
