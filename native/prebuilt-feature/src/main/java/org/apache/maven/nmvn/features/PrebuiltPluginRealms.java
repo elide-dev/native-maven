@@ -1,4 +1,22 @@
-package nmvn;
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.maven.nmvn.features;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -282,8 +300,7 @@ public final class PrebuiltPluginRealms {
      * would register it for us but hardcodes the {@code ClassRealm} type, so the map is populated
      * directly to keep {@code world.getClassRealm}/{@code disposeRealm} working as before.
      */
-    private static ClassRealm newSelfFirstRealm(ClassWorld world, String id, ClassLoader imageLoader)
-            throws Exception {
+    private static ClassRealm newSelfFirstRealm(ClassWorld world, String id, ClassLoader imageLoader) throws Exception {
         SelfFirstRealm realm = new SelfFirstRealm(world, id, imageLoader);
         java.lang.reflect.Field realmsField = ClassWorld.class.getDeclaredField("realms");
         realmsField.setAccessible(true);
@@ -406,8 +423,8 @@ public final class PrebuiltPluginRealms {
             // First entry wins; later versions resolve dynamically at runtime like any unbaked
             // plugin (prebuilt routing falls back on version mismatch anyway).
             if (BY_KEY.containsKey(groupId + ":" + artifactId)) {
-                System.out.println("nmvn prebuilt: skipping " + ga3 + " (another version of "
-                        + groupId + ":" + artifactId + " is already baked; it will resolve dynamically)");
+                System.out.println("nmvn prebuilt: skipping " + ga3 + " (another version of " + groupId + ":"
+                        + artifactId + " is already baked; it will resolve dynamically)");
                 continue;
             }
 
@@ -682,8 +699,8 @@ public final class PrebuiltPluginRealms {
                 }
             }
         }
-        dropped.forEach((className, reason) ->
-                System.out.println("nmvn prebuilt: dropped " + className + " (" + reason + ")"));
+        dropped.forEach(
+                (className, reason) -> System.out.println("nmvn prebuilt: dropped " + className + " (" + reason + ")"));
         return classes;
     }
 
@@ -724,7 +741,8 @@ public final class PrebuiltPluginRealms {
             for (String line : java.nio.file.Files.readAllLines(java.nio.file.Path.of(path))) {
                 int tab = line.indexOf('\t');
                 if (tab > 0) {
-                    perPlugin.computeIfAbsent(line.substring(0, tab), k -> new LinkedHashSet<>())
+                    perPlugin
+                            .computeIfAbsent(line.substring(0, tab), k -> new LinkedHashSet<>())
                             .add(line.substring(tab + 1));
                 }
             }
@@ -873,9 +891,7 @@ public final class PrebuiltPluginRealms {
                         continue;
                     }
                     try (InputStream in = jarFile.getInputStream(entry)) {
-                        resources
-                                .computeIfAbsent(name, k -> new ArrayList<>())
-                                .add(in.readAllBytes());
+                        resources.computeIfAbsent(name, k -> new ArrayList<>()).add(in.readAllBytes());
                     }
                 }
             }
@@ -1160,7 +1176,6 @@ public final class PrebuiltPluginRealms {
         return CORE_REALM;
     }
 
-
     /**
      * Load the prebuilt plugins spec from {@code -Dnmvn.prebuilt.pluginsFile} (preferred; avoids
      * huge / multiline {@code -D} values on Windows) or {@code -Dnmvn.prebuilt.plugins}.
@@ -1257,8 +1272,7 @@ public final class PrebuiltPluginRealms {
         }
         String baked = prebuilt.descriptor.getVersion();
         if (requestedVersion != null && baked != null && !requestedVersion.equals(baked)) {
-            return new Route(
-                    null, "version mismatch (requested " + requestedVersion + ", baked " + baked + ")");
+            return new Route(null, "version mismatch (requested " + requestedVersion + ", baked " + baked + ")");
         }
         String reqDeps = requestedDependencyKey == null ? "" : requestedDependencyKey;
         if (!prebuilt.dependencyKey.equals(reqDeps)) {

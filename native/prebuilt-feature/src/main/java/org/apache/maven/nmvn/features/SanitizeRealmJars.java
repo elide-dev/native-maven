@@ -1,4 +1,22 @@
-package nmvn;
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.maven.nmvn.features;
 
 import java.io.File;
 import java.lang.classfile.ClassFile;
@@ -86,18 +104,17 @@ public final class SanitizeRealmJars {
         for (String entry : splitEntries(spec)) {
             int eq = entry.indexOf('=');
             if (eq < 0) {
-                throw new IllegalArgumentException(
-                        "Malformed prebuilt realm entry (missing '='): ["
-                                + escape(entry)
-                                + "] (len="
-                                + entry.length()
-                                + "). Each line must be g:a:v=jar"
-                                + File.pathSeparator
-                                + "jar... ; jar lists use pathSeparator='"
-                                + File.pathSeparator
-                                + "'. If you only see g:a:v, the line ended right where '=' should be: either the"
-                                + " spec line was truncated when written, or a line terminator (CR from a Windows"
-                                + " pipeline) sits inside the coordinates and split the entry here.");
+                throw new IllegalArgumentException("Malformed prebuilt realm entry (missing '='): ["
+                        + escape(entry)
+                        + "] (len="
+                        + entry.length()
+                        + "). Each line must be g:a:v=jar"
+                        + File.pathSeparator
+                        + "jar... ; jar lists use pathSeparator='"
+                        + File.pathSeparator
+                        + "'. If you only see g:a:v, the line ended right where '=' should be: either the"
+                        + " spec line was truncated when written, or a line terminator (CR from a Windows"
+                        + " pipeline) sits inside the coordinates and split the entry here.");
             }
             // trim(): a CR that leaked into a coordinate (Windows python stdout -> `read -r`) would
             // otherwise become part of the realm key and never match at runtime.
@@ -127,10 +144,12 @@ public final class SanitizeRealmJars {
                     if (broken.isEmpty()) {
                         realmJars.add(jarPath);
                     } else {
-                        Path out = outDir.resolve(outIndex++ + "-" + Path.of(jarPath).getFileName());
+                        Path out = outDir.resolve(
+                                outIndex++ + "-" + Path.of(jarPath).getFileName());
                         rewrite(Path.of(jarPath), out, broken);
-                        System.err.println("sanitize: " + gav + " / " + Path.of(jarPath).getFileName()
-                                + ": stripped EnclosingMethod/Signature from " + broken.size() + " classes " + broken);
+                        System.err.println("sanitize: " + gav + " / "
+                                + Path.of(jarPath).getFileName() + ": stripped EnclosingMethod/Signature from "
+                                + broken.size() + " classes " + broken);
                         realmJars.add(out.toString());
                     }
                 }
@@ -139,7 +158,8 @@ public final class SanitizeRealmJars {
             outEntries.add(gav + "=" + String.join(File.pathSeparator, realmJars));
         }
         Files.write(unlinkableOut, unlinkable);
-        System.err.println("sanitize: link probe wrote " + unlinkable.size() + " unlinkable classes to " + unlinkableOut);
+        System.err.println(
+                "sanitize: link probe wrote " + unlinkable.size() + " unlinkable classes to " + unlinkableOut);
         String rewritten = String.join(ENTRY_SEPARATOR, outEntries);
         if (!outEntries.isEmpty()) {
             rewritten = rewritten + ENTRY_SEPARATOR;
@@ -203,14 +223,19 @@ public final class SanitizeRealmJars {
     /** {metaAccess, lookupJavaType, link} or null when JVMCI is unavailable (probe degrades, loudly). */
     private static Object[] initJvmciLinkProbe() {
         try {
-            Object runtime = Class.forName("jdk.vm.ci.runtime.JVMCI").getMethod("getRuntime").invoke(null);
+            Object runtime = Class.forName("jdk.vm.ci.runtime.JVMCI")
+                    .getMethod("getRuntime")
+                    .invoke(null);
             Object backend = Class.forName("jdk.vm.ci.runtime.JVMCIRuntime")
-                    .getMethod("getHostJVMCIBackend").invoke(runtime);
+                    .getMethod("getHostJVMCIBackend")
+                    .invoke(runtime);
             Object metaAccess = Class.forName("jdk.vm.ci.runtime.JVMCIBackend")
-                    .getMethod("getMetaAccess").invoke(backend);
-            java.lang.reflect.Method lookup = Class.forName("jdk.vm.ci.meta.MetaAccessProvider")
-                    .getMethod("lookupJavaType", Class.class);
-            java.lang.reflect.Method link = Class.forName("jdk.vm.ci.meta.ResolvedJavaType").getMethod("link");
+                    .getMethod("getMetaAccess")
+                    .invoke(backend);
+            java.lang.reflect.Method lookup =
+                    Class.forName("jdk.vm.ci.meta.MetaAccessProvider").getMethod("lookupJavaType", Class.class);
+            java.lang.reflect.Method link =
+                    Class.forName("jdk.vm.ci.meta.ResolvedJavaType").getMethod("link");
             return new Object[] {metaAccess, lookup, link};
         } catch (Throwable t) {
             System.err.println("sanitize: WARNING — JVMCI link probe unavailable (" + t
@@ -220,8 +245,13 @@ public final class SanitizeRealmJars {
     }
 
     /** Replica realm over the (sanitized) jars; returns "gav\tclassName" for classes failing link(). */
-    private static List<String> linkProbe(org.codehaus.plexus.classworlds.ClassWorld world, String realmId,
-            String gav, List<String> jars, Object[] jvmci) throws Exception {
+    private static List<String> linkProbe(
+            org.codehaus.plexus.classworlds.ClassWorld world,
+            String realmId,
+            String gav,
+            List<String> jars,
+            Object[] jvmci)
+            throws Exception {
         if (jvmci == null) {
             return List.of();
         }
@@ -236,10 +266,13 @@ public final class SanitizeRealmJars {
                 Enumeration<JarEntry> entries = jar.entries();
                 while (entries.hasMoreElements()) {
                     String name = entries.nextElement().getName();
-                    if (!name.endsWith(".class") || name.startsWith("META-INF/") || name.endsWith("module-info.class")) {
+                    if (!name.endsWith(".class")
+                            || name.startsWith("META-INF/")
+                            || name.endsWith("module-info.class")) {
                         continue;
                     }
-                    String className = name.substring(0, name.length() - ".class".length()).replace('/', '.');
+                    String className =
+                            name.substring(0, name.length() - ".class".length()).replace('/', '.');
                     Class<?> c;
                     try {
                         c = Class.forName(className, false, realm);
@@ -270,7 +303,8 @@ public final class SanitizeRealmJars {
                 if (!name.endsWith(".class") || name.startsWith("META-INF/") || name.endsWith("module-info.class")) {
                     continue;
                 }
-                String className = name.substring(0, name.length() - ".class".length()).replace('/', '.');
+                String className =
+                        name.substring(0, name.length() - ".class".length()).replace('/', '.');
                 try {
                     probeGenericSignatures(Class.forName(className, false, probeLoader));
                 } catch (Throwable t) {
@@ -339,8 +373,8 @@ public final class SanitizeRealmJars {
     /** Copies the jar, stripping EnclosingMethod + all Signature attributes from broken entries. */
     private static void rewrite(Path source, Path target, Set<String> broken) throws Exception {
         ClassFile classFile = ClassFile.of();
-        ClassTransform strip = ClassTransform
-                .dropping(e -> e instanceof EnclosingMethodAttribute || e instanceof SignatureAttribute)
+        ClassTransform strip = ClassTransform.dropping(
+                        e -> e instanceof EnclosingMethodAttribute || e instanceof SignatureAttribute)
                 .andThen(ClassTransform.transformingMethods(
                         MethodTransform.dropping(e -> e instanceof SignatureAttribute)))
                 .andThen(ClassTransform.transformingFields(

@@ -608,28 +608,10 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
 TOOLS_OUT="$NMVN_WORK_DIR/prebuilt-feature-tools"
 rm -rf "$TOOLS_OUT" && mkdir -p "$TOOLS_OUT"
-# Runtime classes at --release 17 so the SAME jar also works on plain JVM Maven (running on 17+);
-# builder/image-only classes (Feature needs the org.graalvm.nativeimage module) compile separately.
-javac --release 17 -cp "$CLASSPATH" -d "$FEATURE_OUT" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginRealms.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginDescriptorCache.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginRealmCache.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginConfigurationModule.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltRoutingLog.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionDemand.java"
-FEATURE_CP="$(to_cp_path "$FEATURE_OUT")"
-javac --add-modules org.graalvm.nativeimage -cp "${CLASSPATH}${CP_SEP}${FEATURE_CP}" -d "$FEATURE_OUT" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionFeature.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/NmvnLauncher.java"
-# No --release here: this tool uses java.lang.classfile (JDK 24+) and only ever runs on the
-# builder JDK, so it has no 17-compatibility obligation like the runtime classes above.
-javac -cp "${CLASSPATH}${CP_SEP}${FEATURE_CP}" -d "$TOOLS_OUT" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/SanitizeRealmJars.java"
-# Sidecar jar (sisu index + nmvn classes) lives under NMVN_WORK_DIR — not written into the Maven
-# dist tree — and is appended to the image classpath like any other lib jar.
-cp -R "$SCRIPT_DIR/prebuilt-feature/resources/." "$FEATURE_OUT/"
+
+# copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
-(cd "$FEATURE_OUT" && jar cf "$SIDECAR_JAR" nmvn META-INF)
+cp native/prebuilt-feature/target/prebuilt-feature-4.1.0-SNAPSHOT.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
 # ---------------------------------------------------------------------------------------------------

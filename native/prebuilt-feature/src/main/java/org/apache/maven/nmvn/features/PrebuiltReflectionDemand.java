@@ -1,4 +1,22 @@
-package nmvn;
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.maven.nmvn.features;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -130,8 +148,8 @@ public final class PrebuiltReflectionDemand {
 
     /** commons-logging LogFactory static init: Class.forName(LogFactoryImpl).newInstance(). */
     private void seedKnownReflectiveFactories() {
-        boolean loggingPresent = realmClasses.keySet().stream()
-                .anyMatch(n -> n.startsWith("org.apache.commons.logging."));
+        boolean loggingPresent =
+                realmClasses.keySet().stream().anyMatch(n -> n.startsWith("org.apache.commons.logging."));
         // Always try these when the plugin realm has spring/commons-logging, and also when they
         // resolve from the image classpath (Preserve package=org.apache.commons.logging.impl.*).
         for (String name : COMMONS_LOGGING_FACTORIES) {
@@ -177,7 +195,9 @@ public final class PrebuiltReflectionDemand {
         }
         for (URI uri : jarUris) {
             try {
-                if ("file".equals(uri.getScheme()) && uri.getPath() != null && uri.getPath().endsWith(".jar")) {
+                if ("file".equals(uri.getScheme())
+                        && uri.getPath() != null
+                        && uri.getPath().endsWith(".jar")) {
                     try (JarFile jar = new JarFile(Path.of(uri).toFile())) {
                         Enumeration<JarEntry> entries = jar.entries();
                         while (entries.hasMoreElements()) {
