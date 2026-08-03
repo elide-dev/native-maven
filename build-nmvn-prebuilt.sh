@@ -609,6 +609,8 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 TOOLS_OUT="$NMVN_WORK_DIR/prebuilt-feature-tools"
 rm -rf "$TOOLS_OUT" && mkdir -p "$TOOLS_OUT"
 
+# use Maven to prepare the prebuilt-feature JAR
+$MAVEN_HOME/bin/mvn -pl native/prebuilt-feature/ package -am -DskipTests
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
 cp native/prebuilt-feature/target/prebuilt-feature-4.1.0-SNAPSHOT.jar "$SIDECAR_JAR"
