@@ -9,7 +9,7 @@
   <artifactId>prebuilt-feature</artifactId>
   <packaging>jar</packaging>
   <properties>
-    <exec.mainClass>org.apache.maven.nmvn.features.PrebuiltFeature</exec.mainClass>
+    <exec.mainClass>org.apache.maven.org.apache.maven.nmvn.features.features.PrebuiltFeature</exec.mainClass>
     <!-- SanitizeRealmJars is using API from version 25 -->
     <minimalJavaBuildVersion>25</minimalJavaBuildVersion>
     <maven.compiler.release>${minimalJavaBuildVersion}</maven.compiler.release>

@@ -1,2 +1,2 @@
-nmvn.PrebuiltPluginDescriptorCache
-nmvn.PrebuiltPluginRealmCache
+org.apache.maven.nmvn.features.PrebuiltPluginDescriptorCache
+org.apache.maven.nmvn.features.PrebuiltPluginRealmCache

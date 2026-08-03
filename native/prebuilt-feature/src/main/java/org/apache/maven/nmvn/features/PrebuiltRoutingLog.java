@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.maven.nmvn.features;
+package org.apache.maven.org.apache.maven.nmvn.features.features;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
  * Once-per-plugin-id INFO logs for prebuilt routing decisions so a native binary run shows which
  * plugins are baked vs dynamic without spamming multi-module builds.
  *
- * <p>Disable with {@code -Dnmvn.routing.log=false}. Use DEBUG on this logger for every call site.
+ * <p>Disable with {@code -Dorg.apache.maven.nmvn.features.routing.log=false}. Use DEBUG on this logger for every call site.
  */
 public final class PrebuiltRoutingLog {
 
@@ -48,7 +48,7 @@ public final class PrebuiltRoutingLog {
     }
 
     private static void logOnce(String pluginId, boolean baked, String reason) {
-        if (!Boolean.parseBoolean(System.getProperty("nmvn.routing.log", "true"))) {
+        if (!Boolean.parseBoolean(System.getProperty("org.apache.maven.nmvn.features.routing.log", "true"))) {
             return;
         }
         if (!LOGGED.add(pluginId)) {

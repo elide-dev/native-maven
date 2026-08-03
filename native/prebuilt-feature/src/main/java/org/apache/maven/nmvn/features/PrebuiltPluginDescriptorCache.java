@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.maven.nmvn.features;
+package org.apache.maven.org.apache.maven.nmvn.features.features;
 
 import javax.inject.Named;
 import javax.inject.Singleton;
