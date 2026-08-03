@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Benchmark classic Maven vs native nmvn on every project under examples/.
+# Benchmark classic Maven vs native nmvn on every project under examples/spring/
+# (examples/spring/unsupported/ is skipped — those projects are not benchmarked).
 #
 # Default command:
 #   clean package -DskipTests=true
@@ -25,7 +26,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-EXAMPLES_DIR="$SCRIPT_DIR/examples"
+EXAMPLES_DIR="$SCRIPT_DIR/examples/spring"
 
 RUNS=3
 WARMUP=1
@@ -37,7 +38,7 @@ CSV=""
 KEEP_GOING=0
 
 usage() {
-  sed -n '3,24p' "$0" | sed 's/^# \?//'
+  sed -n '3,25p' "$0" | sed 's/^# \?//'
 }
 
 while [ $# -gt 0 ]; do
@@ -82,11 +83,13 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-# Discover projects (directories under examples/ that contain pom.xml).
+# Discover projects (directories under examples/spring/ that contain pom.xml).
+# unsupported/ is skipped explicitly — don't rely on it never growing a pom.xml.
 PROJECTS=()
 for d in "$EXAMPLES_DIR"/*/; do
   [ -f "${d}pom.xml" ] || continue
   name="$(basename "$d")"
+  [ "$name" = "unsupported" ] && continue
   if [ -n "$ONLY" ]; then
     case ",$ONLY," in
       *",$name,"*) ;;
