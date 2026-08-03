@@ -1,11 +1,13 @@
 #!/bin/bash
 #
-# Launcher for the prebuilt-plugins native image (nmvn-native).
+# Launcher for the prebuilt-plugins native images (default: build/nmvn-native).
 #
-# The native image's entry point is the ClassWorlds Launcher
-# (org.codehaus.plexus.classworlds.launcher.Launcher), so the wrapper must hand it the
-# classworlds config (m2.conf) and the real main class, exactly like a normal Maven boot.
-# m2.conf builds the plexus.core realm and dispatches to org.apache.maven.cling.MavenCling.
+# The image's entry point is nmvn.NmvnLauncher: it takes the BAKED ClassWorld (constructed at
+# image build time) and hands it to MavenCling directly — no m2.conf, no classworlds config.
+# The flags below are the verified minimal set (java.home is REQUIRED — the compiler plugin
+# fails to initialize without it; maven.conf is derived from maven.home by Maven itself;
+# library.jline.path did nothing in the image — jline picks its FFM provider either way).
+# Keep this launch in sync with MavenCommand.kt in WHIPLASH (the `elide mvn` launcher).
 
 # --- Resolve script directory (follow symlinks) ---
 PRG="$0"
@@ -86,12 +88,8 @@ find_maven_basedir() {
 MAVEN_PROJECTBASEDIR=$(find_maven_basedir "$@")
 
 "$SCRIPT_DIR/$NMVN_BINARY" \
-  -Dclassworlds.conf="$MAVEN_HOME/bin/m2.conf" \
-  -Dmaven.mainClass=org.apache.maven.cling.MavenCling \
-  -Dlibrary.jline.path="$MAVEN_HOME/lib/jline-native" \
   -Dguice_bytecode_gen_option=DISABLED \
   -Djava.home="$JAVA_HOME" \
   -Dmaven.home="$MAVEN_HOME" \
-  -Dmaven.conf="$MAVEN_HOME/conf" \
   -Dmaven.multiModuleProjectDirectory="$MAVEN_PROJECTBASEDIR" \
   "$@"
