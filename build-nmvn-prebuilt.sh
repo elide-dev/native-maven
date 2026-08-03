@@ -606,8 +606,6 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # would make those methods reachable as image roots, the static jdk.vm.ci.runtime.JVMCI.runtime
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
-TOOLS_OUT="$NMVN_WORK_DIR/prebuilt-feature-tools"
-rm -rf "$TOOLS_OUT" && mkdir -p "$TOOLS_OUT"
 
 # use Maven to prepare the prebuilt-feature JAR
 $MAVEN_HOME/bin/mvn -pl native/prebuilt-feature/ package -am -DskipTests
@@ -668,7 +666,7 @@ echo ">>> Sanitizing realm jars + link probe ..."
 # from the baked maps (see PrebuiltPluginRealms.loadAllClasses). Runs in this throwaway JVM
 # because JVMCI touched from image-baked code leaks the JVMCIRuntime singleton into the heap.
 # Write sanitized spec to a file (not stdout→shell) so newlines / Windows paths are preserved.
-TOOLS_CP="$(to_cp_path "$TOOLS_OUT")"
+TOOLS_CP="$(to_cp_path "$SIDECAR_JAR")"
 java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
