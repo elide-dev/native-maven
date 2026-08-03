@@ -11,7 +11,8 @@
 # Options:
 #   --runs N            timed iterations per engine after warmup (default: 3)
 #   --warmup N          untimed warmup runs per engine (default: 1)
-#   --nmvn-binary NAME  NMVN_BINARY value (default: nmvn-spring-4.1.0)
+#   --nmvn-binary NAME  NMVN_BINARY value, relative to the repo root
+#                       (default: build/nmvn-spring-4.1.0 — where the build scripts write)
 #   --mvn CMD           classic Maven command (default: mvn on PATH, or MVN env)
 #   --goals "..."       Maven goals/args (default: clean package -DskipTests=true)
 #   --only NAME[,...]   only these example directory names
@@ -28,7 +29,7 @@ EXAMPLES_DIR="$SCRIPT_DIR/examples"
 
 RUNS=3
 WARMUP=1
-NMVN_BINARY_NAME="${NMVN_BINARY:-nmvn-spring-4.1.0}"
+NMVN_BINARY_NAME="${NMVN_BINARY:-build/nmvn-spring-4.1.0}"
 MVN_CMD="${MVN:-mvn}"
 GOALS=(clean package -DskipTests=true)
 ONLY=""
