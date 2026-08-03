@@ -67,7 +67,8 @@ public final class NmvnLauncher {
                 java.net.URL url = urls.nextElement();
                 indexes++;
                 try (java.io.InputStream in = url.openStream()) {
-                    if (new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).contains("org.apache.maven.nmvn.features.")) {
+                    if (new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                            .contains("org.apache.maven.nmvn.features.")) {
                         nmvnIndexes++;
                     }
                 }
