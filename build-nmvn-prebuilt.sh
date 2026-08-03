@@ -613,7 +613,7 @@ rm -rf "$TOOLS_OUT" && mkdir -p "$TOOLS_OUT"
 $MAVEN_HOME/bin/mvn -pl native/prebuilt-feature/ package -am -DskipTests
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
-cp native/prebuilt-feature/target/prebuilt-feature-4.1.0-SNAPSHOT.jar "$SIDECAR_JAR"
+cp native/prebuilt-feature/target/prebuilt-feature-4.1.0.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
 # ---------------------------------------------------------------------------------------------------
