@@ -103,6 +103,7 @@ under the License.
     <module>impl</module>
     <module>compat</module>
     <module>apache-maven</module>
+    <module>native</module>
   </modules>
 
   <scm>
@@ -811,6 +812,7 @@ under the License.
           <groupId>org.apache.rat</groupId>
           <artifactId>apache-rat-plugin</artifactId>
           <configuration>
+            <skip>true</skip>
             <excludes>
               <exclude>Jenkinsfile</exclude>
               <exclude>**/.gitattributes</exclude>

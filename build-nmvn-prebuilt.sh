@@ -606,30 +606,12 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # would make those methods reachable as image roots, the static jdk.vm.ci.runtime.JVMCI.runtime
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
-TOOLS_OUT="$NMVN_WORK_DIR/prebuilt-feature-tools"
-rm -rf "$TOOLS_OUT" && mkdir -p "$TOOLS_OUT"
-# Runtime classes at --release 17 so the SAME jar also works on plain JVM Maven (running on 17+);
-# builder/image-only classes (Feature needs the org.graalvm.nativeimage module) compile separately.
-javac --release 17 -cp "$CLASSPATH" -d "$FEATURE_OUT" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginRealms.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginDescriptorCache.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginRealmCache.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltPluginConfigurationModule.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltRoutingLog.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionDemand.java"
-FEATURE_CP="$(to_cp_path "$FEATURE_OUT")"
-javac --add-modules org.graalvm.nativeimage -cp "${CLASSPATH}${CP_SEP}${FEATURE_CP}" -d "$FEATURE_OUT" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/PrebuiltReflectionFeature.java" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/NmvnLauncher.java"
-# No --release here: this tool uses java.lang.classfile (JDK 24+) and only ever runs on the
-# builder JDK, so it has no 17-compatibility obligation like the runtime classes above.
-javac -cp "${CLASSPATH}${CP_SEP}${FEATURE_CP}" -d "$TOOLS_OUT" \
-  "$SCRIPT_DIR/prebuilt-feature/src/nmvn/SanitizeRealmJars.java"
-# Sidecar jar (sisu index + nmvn classes) lives under NMVN_WORK_DIR — not written into the Maven
-# dist tree — and is appended to the image classpath like any other lib jar.
-cp -R "$SCRIPT_DIR/prebuilt-feature/resources/." "$FEATURE_OUT/"
+
+# use Maven to prepare the prebuilt-feature JAR
+$MAVEN_HOME/bin/mvn -q -pl native/prebuilt-feature/ package -am -DskipTests
+# copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
-(cd "$FEATURE_OUT" && jar cf "$SIDECAR_JAR" nmvn META-INF)
+cp native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
 # ---------------------------------------------------------------------------------------------------
@@ -679,18 +661,23 @@ for n, line in enumerate(lines, 1):
 print(f">>>   {len(lines)} plugin realm(s)")
 PY
 echo ">>> Sanitizing realm jars + link probe ..."
+# use Maven to prepare the sanitizing JAR
+$MAVEN_HOME/bin/mvn -q -pl native/sanitize/ package -am -DskipTests
 # JVMCI flags: the tool runs the SAME ResolvedJavaType.link() SVM runs on registered classes,
 # against an exact replica of each baked realm; failures land in unlinkable.txt and are dropped
 # from the baked maps (see PrebuiltPluginRealms.loadAllClasses). Runs in this throwaway JVM
 # because JVMCI touched from image-baked code leaks the JVMCIRuntime singleton into the heap.
 # Write sanitized spec to a file (not stdout→shell) so newlines / Windows paths are preserved.
-TOOLS_CP="$(to_cp_path "$TOOLS_OUT")"
+TOOLS_CP="$(to_cp_path "$SIDECAR_JAR")"
+SANITIZE_JAR="$NMVN_WORK_DIR/nmvn-sanitize.jar"
+cp native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
+SANITIZE_CP="$(to_cp_path "$SANITIZE_JAR")"
 java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
-  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}" \
-  nmvn.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
+  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}${SANITIZE_CP}" \
+  org.apache.maven.sanitize.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
 fi
 
 # ---------------------------------------------------------------------------------------------------

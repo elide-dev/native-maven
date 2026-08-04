@@ -38,3 +38,4 @@ __pycache__/
 /lib*.dylib
 # GraalVM writes svm_err_b_*.md crash reports into the working directory
 /svm_err_*.md
+/*.so
