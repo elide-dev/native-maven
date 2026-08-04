@@ -752,6 +752,12 @@ NATIVE_IMAGE_ARGS=(
   -Dguice_bytecode_gen_option=DISABLED
   --no-fallback
   -H:+UnlockExperimentalVMOptions
+  # SVM by default parses and CONSUMES -D/-XX/-Xm* arguments at VM startup, stripping them from
+  # the argv Maven sees — a bare `-DskipTests` became system property skipTests="" and Maven's
+  # own "bare -D means true" CLI semantics never applied. Disable it so every argument reaches
+  # Maven's CLI parsing; NmvnLauncher mirrors -D args into system properties (the part of SVM's
+  # behavior launchers actually relied on — maven.home is required as a system property).
+  -H:-ParseRuntimeOptions
   -H:+ReportExceptionStackTraces
   -H:+AllowJRTFileSystem
   -H:+RuntimeClassLoading
