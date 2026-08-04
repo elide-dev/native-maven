@@ -23,6 +23,7 @@ public final class NmvnLauncher {
     private NmvnLauncher() {}
 
     public static void main(String[] args) throws Exception {
+        mirrorCommandLineProperties(args);
         ClassWorld world = PrebuiltPluginRealms.world();
         ClassRealm core = world == null ? null : world.getClassRealm(PrebuiltPluginRealms.CORE_REALM_ID);
         if (core == null) {
@@ -37,6 +38,34 @@ public final class NmvnLauncher {
         Thread.currentThread().setContextClassLoader(core);
         diagnose(core);
         System.exit(MavenCling.main(args, world));
+    }
+
+    /**
+     * Mirrors every {@code -Dkey[=value]} argument into Java System Properties, standing in for the
+     * JVM flags the {@code mvn} script passes on HotSpot ({@code -Dmaven.home}, {@code
+     * -Dmaven.multiModuleProjectDirectory}, ...).
+     *
+     * <p>The image is built with {@code -H:-ParseRuntimeOptions}: SubstrateVM would otherwise
+     * consume every {@code -D} argument at VM startup and strip it from argv, so a bare {@code
+     * -DskipTests} became system property {@code skipTests=""} and Maven's CLI — where a bare
+     * {@code -D} means {@code true} — never saw the flag. With SVM parsing off, all arguments reach
+     * {@link MavenCling} as regular user properties; this mirror covers the properties that must be
+     * REAL system properties before CLI parsing runs (BaseParser.getInstallationDirectory demands
+     * {@code maven.home}; Guice reads {@code guice_bytecode_gen_option} during bootstrap). Bare
+     * {@code -Dkey} mirrors as {@code "true"}, matching Maven's own CLI defaulting.
+     */
+    private static void mirrorCommandLineProperties(String[] args) {
+        for (String arg : args) {
+            if (arg.length() > 2 && arg.startsWith("-D")) {
+                String prop = arg.substring(2);
+                int eq = prop.indexOf('=');
+                if (eq < 0) {
+                    System.setProperty(prop, "true");
+                } else if (eq > 0) {
+                    System.setProperty(prop.substring(0, eq), prop.substring(eq + 1));
+                }
+            }
+        }
     }
 
     /** Startup diagnosis for the sidecar-activation path (temporary; prints to stderr). */
