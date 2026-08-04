@@ -669,11 +669,14 @@ $MAVEN_HOME/bin/mvn -q -pl native/sanitize/ package -am -DskipTests
 # because JVMCI touched from image-baked code leaks the JVMCIRuntime singleton into the heap.
 # Write sanitized spec to a file (not stdout→shell) so newlines / Windows paths are preserved.
 TOOLS_CP="$(to_cp_path "$SIDECAR_JAR")"
+SANITIZE_JAR="$NMVN_WORK_DIR/nmvn-sanitize.jar"
+cp native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
+SANITIZE_CP="$(to_cp_path "$SANITIZE_JAR")"
 java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
-  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}native/sanitize/target/sanitize-4.1.0*.jar" \
+  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}${SANITIZE_CP}" \
   org.apache.maven.sanitize.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
 fi
 
