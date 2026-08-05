@@ -45,7 +45,7 @@ public final class NmvnLauncher {
     private NmvnLauncher() {}
 
     public static void main(String[] args) throws Exception {
-        setupMavenEnvironment();
+        setupMavenEnvironment(args);
         mirrorCommandLineProperties(args);
         ClassWorld world = PrebuiltPluginRealms.world();
         ClassRealm core = world == null ? null : world.getClassRealm(PrebuiltPluginRealms.CORE_REALM_ID);
@@ -94,7 +94,7 @@ public final class NmvnLauncher {
     /** Implements processing as originally done by {@code nmvn} script.
      *
      */
-    private static void setupMavenEnvironment() throws URISyntaxException, java.io.IOException {
+    private static void setupMavenEnvironment(String[] args) throws URISyntaxException, java.io.IOException {
         var mavenHome = findMavenHome();
         if (!mavenHome.isDirectory()) {
             throw new FileNotFoundException(
@@ -113,7 +113,30 @@ public final class NmvnLauncher {
         System.setProperty("guice_bytecode_gen_option", "DISABLED");
         System.setProperty("java.home", javaHome);
         System.setProperty("maven.home", mavenHome.getPath());
-        System.setProperty("maven.multiModuleProjectDirectory", mavenHome.getPath());
+        System.setProperty(
+                "maven.multiModuleProjectDirectory", findProjectBaseDir(args).getPath());
+    }
+
+    private static File findProjectBaseDir(String[] args) throws java.io.IOException {
+        var basedir = new File(System.getProperty("user.dir"));
+        for (var i = 0; i < args.length - 1; i++) {
+            if ("-f".equals(args[i]) || "--file".equals(args[i])) {
+                var file = new File(args[i + 1]).getCanonicalFile();
+                if (file.isDirectory()) {
+                    basedir = file;
+                } else if (file.isFile()) {
+                    basedir = file.getParentFile();
+                }
+                break;
+            }
+        }
+        basedir = basedir.getCanonicalFile();
+        for (var dir = basedir; dir != null; dir = dir.getParentFile()) {
+            if (new File(dir, ".mvn").isDirectory()) {
+                return dir;
+            }
+        }
+        return basedir;
     }
 
     private static File findMavenHome() throws URISyntaxException {
