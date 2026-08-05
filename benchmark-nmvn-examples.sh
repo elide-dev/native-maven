@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 #
-# Benchmark classic Maven vs native nmvn on every project under examples/spring/
-# (examples/spring/unsupported/ is skipped — those projects are not benchmarked).
+# Benchmark classic Maven vs native nmvn on every project under
+# examples/spring/<version>/ (an unsupported/ subdirectory is skipped — those
+# projects are not benchmarked).
 #
 # Default command:
 #   clean package -DskipTests=true
 #
 # Usage:
-#   ./benchmark-nmvn-examples.sh [options]
+#   ./benchmark-nmvn-examples.sh --spring VERSION --nmvn-binary PATH [options]
 #
 # Options:
+#   --spring VERSION    Spring Boot examples to benchmark: 4.0.7 or 4.1.0
+#                       (or short form 407/410); also settable via SPRING_VERSION
+#                       (required, no default)
 #   --runs N            timed iterations per engine after warmup (default: 3)
 #   --warmup N          untimed warmup runs per engine (default: 1)
-#   --nmvn-binary NAME  NMVN_BINARY value, relative to the repo root
-#                       (default: build/nmvn-spring-4.1.0 — where the build scripts write)
+#   --nmvn-binary PATH  native binary to benchmark, absolute or relative to the repo
+#                       root; also settable via NMVN_BINARY (required, no default;
+#                       the build scripts write to build/, e.g. build/nmvn-spring-4.1.0)
 #   --mvn CMD           classic Maven command (default: mvn on PATH, or MVN env)
 #   --goals "..."       Maven goals/args (default: clean package -DskipTests=true)
 #   --only NAME[,...]   only these example directory names
@@ -21,16 +26,17 @@
 #   --keep-going        continue after a failed project/engine
 #   -h, --help          this help
 #
-# Requires: python3, a working classic mvn, and a built native binary + ./nmvn launcher.
+# Requires: python3, a working classic mvn, and a built native binary.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-EXAMPLES_DIR="$SCRIPT_DIR/examples/spring"
+SPRING_ROOT="$SCRIPT_DIR/examples/spring"
 
 RUNS=3
 WARMUP=1
-NMVN_BINARY_NAME="${NMVN_BINARY:-build/nmvn-spring-4.1.0}"
+SPRING="${SPRING_VERSION:-}"
+NMVN_BINARY_NAME="${NMVN_BINARY:-}"
 MVN_CMD="${MVN:-mvn}"
 GOALS=(clean package -DskipTests=true)
 ONLY=""
@@ -38,11 +44,12 @@ CSV=""
 KEEP_GOING=0
 
 usage() {
-  sed -n '3,25p' "$0" | sed 's/^# \?//'
+  sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --spring) SPRING="${2:?}"; shift 2 ;;
     --runs) RUNS="${2:?}"; shift 2 ;;
     --warmup) WARMUP="${2:?}"; shift 2 ;;
     --nmvn-binary) NMVN_BINARY_NAME="${2:?}"; shift 2 ;;
@@ -57,19 +64,45 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -z "$SPRING" ]; then
+  echo "Error: no Spring version specified — set SPRING_VERSION or pass --spring VERSION" >&2
+  echo "       Available: 4.0.7, 4.1.0 (folders under examples/spring/)" >&2
+  exit 2
+fi
+
+# Normalize the version to its examples/spring/ folder name (4.1.0 -> 410).
+case "$SPRING" in
+  4.0.7|407) SPRING_DIR=407; SPRING_FULL=4.0.7 ;;
+  4.1.0|410) SPRING_DIR=410; SPRING_FULL=4.1.0 ;;
+  *)
+    echo "Error: unknown Spring version: $SPRING (expected 4.0.7 or 4.1.0)" >&2
+    exit 2
+    ;;
+esac
+
+EXAMPLES_DIR="$SPRING_ROOT/$SPRING_DIR"
+
 if [ ! -d "$EXAMPLES_DIR" ]; then
-  echo "Error: examples/ not found at $EXAMPLES_DIR" >&2
+  echo "Error: examples not found at $EXAMPLES_DIR" >&2
   exit 1
 fi
 
-if [ ! -x "$SCRIPT_DIR/nmvn" ]; then
-  echo "Error: nmvn launcher not executable: $SCRIPT_DIR/nmvn" >&2
-  exit 1
+if [ -z "$NMVN_BINARY_NAME" ]; then
+  echo "Error: no native binary specified — set NMVN_BINARY or pass --nmvn-binary PATH" >&2
+  echo "       e.g.: NMVN_BINARY=build/nmvn-spring-$SPRING_FULL $0 --spring $SPRING_FULL" >&2
+  exit 2
 fi
 
-if [ ! -x "$SCRIPT_DIR/$NMVN_BINARY_NAME" ]; then
-  echo "Error: native binary not found/executable: $SCRIPT_DIR/$NMVN_BINARY_NAME" >&2
-  echo "       Build one first, e.g.: ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json" >&2
+# Resolve the native binary: absolute paths are used as-is, everything else is
+# relative to the repo root.
+case "$NMVN_BINARY_NAME" in
+  /*) NMVN_BIN="$NMVN_BINARY_NAME" ;;
+  *) NMVN_BIN="$SCRIPT_DIR/$NMVN_BINARY_NAME" ;;
+esac
+
+if [ ! -x "$NMVN_BIN" ]; then
+  echo "Error: native binary not found/executable: $NMVN_BIN" >&2
+  echo "       Build one first, e.g.: ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-$SPRING_FULL.json" >&2
   exit 1
 fi
 
@@ -83,7 +116,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-# Discover projects (directories under examples/spring/ that contain pom.xml).
+# Discover projects (directories under examples/spring/$SPRING_DIR/ that contain pom.xml).
 # unsupported/ is skipped explicitly — don't rely on it never growing a pom.xml.
 PROJECTS=()
 for d in "$EXAMPLES_DIR"/*/; do
@@ -105,11 +138,12 @@ if [ ${#PROJECTS[@]} -eq 0 ]; then
 fi
 
 echo ">>> Benchmark: classic Maven vs native nmvn"
+echo ">>> Spring:    $SPRING_FULL (examples/spring/$SPRING_DIR)"
 echo ">>> Projects:  ${PROJECTS[*]}"
 echo ">>> Goals:     ${GOALS[*]}"
 echo ">>> Runs:      $RUNS timed (+ $WARMUP warmup) per engine"
 echo ">>> Classic:   $MVN_CMD"
-echo ">>> Native:    NMVN_BINARY=$NMVN_BINARY_NAME $SCRIPT_DIR/nmvn"
+echo ">>> Native:    $NMVN_BIN"
 echo
 
 # Results file: TSV rows for python summarizer
@@ -130,7 +164,7 @@ run_one() {
     if [ "$engine" = "classic" ]; then
       "$MVN_CMD" -q -B clean -DskipTests=true >/dev/null 2>&1 || true
     else
-      NMVN_BINARY="$NMVN_BINARY_NAME" "$SCRIPT_DIR/nmvn" -q -B clean -DskipTests=true >/dev/null 2>&1 || true
+      "$NMVN_BIN" -q -B clean -DskipTests=true >/dev/null 2>&1 || true
     fi
   )
 
@@ -141,7 +175,7 @@ run_one() {
     (cd "$dir" && "$MVN_CMD" -B "${GOALS[@]}") >"$log" 2>&1
     exit_code=$?
   else
-    (cd "$dir" && NMVN_BINARY="$NMVN_BINARY_NAME" "$SCRIPT_DIR/nmvn" -B "${GOALS[@]}") >"$log" 2>&1
+    (cd "$dir" && "$NMVN_BIN" -B "${GOALS[@]}") >"$log" 2>&1
     exit_code=$?
   fi
   set -e

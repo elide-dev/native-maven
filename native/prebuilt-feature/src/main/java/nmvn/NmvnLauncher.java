@@ -18,6 +18,10 @@
  */
 package nmvn;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.net.URISyntaxException;
+
 import org.apache.maven.cling.MavenCling;
 import org.codehaus.plexus.classworlds.ClassWorld;
 import org.codehaus.plexus.classworlds.realm.ClassRealm;
@@ -41,6 +45,7 @@ public final class NmvnLauncher {
     private NmvnLauncher() {}
 
     public static void main(String[] args) throws Exception {
+        setupMavenEnvironment(args);
         mirrorCommandLineProperties(args);
         ClassWorld world = PrebuiltPluginRealms.world();
         ClassRealm core = world == null ? null : world.getClassRealm(PrebuiltPluginRealms.CORE_REALM_ID);
@@ -86,6 +91,73 @@ public final class NmvnLauncher {
         }
     }
 
+    /** Implements processing as originally done by {@code nmvn} script.
+     *
+     */
+    private static void setupMavenEnvironment(String[] args) throws URISyntaxException, java.io.IOException {
+        var mavenHome = findMavenHome();
+        if (!mavenHome.isDirectory()) {
+            throw new FileNotFoundException(
+                    "Error: Maven home not found at " + mavenHome + " - Set it with: export MAVEN_HOME=/path/to/maven");
+        }
+        var javaHome = System.getenv("JAVA_HOME");
+        if (javaHome == null) {
+            throw new FileNotFoundException("Error: JAVA_HOME is not set. Set it with: export JAVA_HOME=/path/to/jdk");
+        }
+
+        // The flags below are the verified minimal set (java.home is REQUIRED — the compiler plugin
+        // fails to initialize without it; maven.conf is derived from maven.home by Maven itself;
+        // library.jline.path did nothing in the image — jline picks its FFM provider either way).
+        // Keep this launch in sync with MavenCommand.kt in WHIPLASH (the `elide mvn` launcher).
+
+        System.setProperty("guice_bytecode_gen_option", "DISABLED");
+        System.setProperty("java.home", javaHome);
+        System.setProperty("maven.home", mavenHome.getPath());
+        System.setProperty(
+                "maven.multiModuleProjectDirectory", findProjectBaseDir(args).getPath());
+    }
+
+    private static File findProjectBaseDir(String[] args) throws java.io.IOException {
+        var basedir = new File(System.getProperty("user.dir"));
+        for (var i = 0; i < args.length - 1; i++) {
+            if ("-f".equals(args[i]) || "--file".equals(args[i])) {
+                var file = new File(args[i + 1]).getCanonicalFile();
+                if (file.isDirectory()) {
+                    basedir = file;
+                } else if (file.isFile()) {
+                    basedir = file.getParentFile();
+                }
+                break;
+            }
+        }
+        basedir = basedir.getCanonicalFile();
+        for (var dir = basedir; dir != null; dir = dir.getParentFile()) {
+            if (new File(dir, ".mvn").isDirectory()) {
+                return dir;
+            }
+        }
+        return basedir;
+    }
+
+    private static File findMavenHome() throws URISyntaxException {
+        var envHome = System.getenv("MAVEN_HOME");
+        if (envHome != null) {
+            return new File(envHome);
+        } else {
+            var exeUrl =
+                    NmvnLauncher.class.getProtectionDomain().getCodeSource().getLocation();
+            var exeFile = new File(exeUrl.toURI());
+            for (var baseDir = exeFile.getParentFile(); baseDir != null; baseDir = baseDir.getParentFile()) {
+                var mavenHome = files(baseDir, "apache-maven", "target", "apache-maven-4.1.0-SNAPSHOT");
+                if (mavenHome.isDirectory()) {
+                    return mavenHome;
+                }
+            }
+            // fallback
+            return files(exeFile.getParentFile(), "apache-maven-4.1.0-SNAPSHOT");
+        }
+    }
+
     /** Startup diagnosis for the sidecar-activation path (temporary; prints to stderr). */
     private static void diagnose(ClassRealm core) {
         try {
@@ -108,5 +180,13 @@ public final class NmvnLauncher {
         } catch (Throwable t) {
             System.err.println("nmvn diag FAILED: " + t);
         }
+    }
+
+    private static File files(File root, String... relativePath) {
+        var dir = root;
+        for (var p : relativePath) {
+            dir = new File(dir, p);
+        }
+        return dir;
     }
 }
