@@ -773,7 +773,10 @@ NATIVE_IMAGE_ARGS=(
   -H:EnableURLProtocols=jar
   -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
   -H:IncludeResources='org/apache/maven/plugins/clean/.*'
-  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-min")"
+  # Variant-specific metadata set: reflection-crema/ for this script, reflection-non-crema/ for
+  # the non-crema one (which additionally registers guice's circular-dependency JDK proxies —
+  # not needed here, Crema defines proxy classes at run time).
+  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-crema")"
   -H:Preserve=module=java.base
   -H:Preserve=module=java.logging
   -H:Preserve=module=java.xml

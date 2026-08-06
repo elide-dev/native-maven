@@ -711,7 +711,12 @@ NATIVE_IMAGE_ARGS=(
   -H:EnableURLProtocols=jar
   -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
   -H:IncludeResources='org/apache/maven/plugins/clean/.*'
-  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-min")"
+  # Variant-specific metadata set (reflection-crema/ is the crema script's counterpart). Beyond
+  # the shared jline FFM downcalls, this registers the JDK dynamic proxies guice creates to break
+  # circular dependencies in maven-core (e.g. MavenPluginManager). Crema defines proxy classes at
+  # run time; without it they must be known at build time, or the first plugin execution dies
+  # with MissingReflectionRegistrationError. Captured via the native-image agent on the examples.
+  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-non-crema")"
   -H:Preserve=module=java.base
   -H:Preserve=module=java.logging
   -H:Preserve=module=java.xml
