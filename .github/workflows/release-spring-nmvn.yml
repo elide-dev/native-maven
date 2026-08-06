@@ -11,12 +11,14 @@
 # Maven dist stays in apache-maven/target/.
 #
 # Toolchain: download GraalVM CE 25.2.4, set JAVA_HOME (+ bin on PATH). Finding native-image
-# (including Windows native-image.cmd) and Crema checks live in build-nmvn-prebuilt.sh.
+# (including Windows native-image.cmd) and Crema checks live in
+# build-scripts/crema/build-nmvn-prebuilt.sh (the default NMVN_VARIANT; a non-crema variant
+# exists under build-scripts/non-crema/).
 #
 # Per platform, for Boot 4.1.0 and 4.0.7:
-#   resolve_boot_catalog.py → build-nmvn-catalog.sh → zip to dist/
+#   resolve_boot_catalog.py → build-scripts/build-nmvn-catalog.sh → zip to dist/
 # then the generic image:
-#   build-nmvn-generic.sh → zip to dist/
+#   build-scripts/build-nmvn-generic.sh → zip to dist/
 #
 name: Build Spring Native Maven
 
@@ -134,7 +136,7 @@ jobs:
       - name: Resolve catalogs and build Spring specialized + generic images
         run: |
           set -euo pipefail
-          chmod +x catalog/resolve_boot_catalog.py build-nmvn-catalog.sh build-nmvn-prebuilt.sh build-nmvn-generic.sh
+          chmod +x catalog/resolve_boot_catalog.py build-scripts/build-nmvn-catalog.sh build-scripts/build-nmvn-generic.sh build-scripts/crema/build-nmvn-prebuilt.sh build-scripts/non-crema/build-nmvn-prebuilt.sh
 
           # Fresh build tree (same layout as local defaults).
           rm -rf build dist
@@ -161,7 +163,7 @@ jobs:
               --boot-version "${BOOT}" \
               --language java
 
-            ./build-nmvn-catalog.sh "${CATALOG}"
+            ./build-scripts/build-nmvn-catalog.sh "${CATALOG}"
 
             BIN="build/nmvn-spring-${BOOT}"
             if [ -f "${BIN}.exe" ]; then
@@ -186,7 +188,7 @@ jobs:
           # Plugin versions are resolved from the dist's maven-core jar by the script itself
           # (default lifecycle bindings — what a project without a version-pinning parent
           # requests), so there is nothing to keep in sync here when the bindings are bumped.
-          ./build-nmvn-generic.sh
+          ./build-scripts/build-nmvn-generic.sh
 
           GENERIC_BIN="build/nmvn-generic"
           if [ -f "${GENERIC_BIN}.exe" ]; then

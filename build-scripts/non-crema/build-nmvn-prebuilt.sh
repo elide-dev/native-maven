@@ -1,45 +1,46 @@
 #!/bin/bash
 #
-# Builds a GraalVM native image of Maven (nmvn), optionally with plugins baked in as PREBUILT,
-# ISOLATED ClassRealms — snapshotted into the image heap at build time.
+# Builds a GraalVM native image of Maven (nmvn) WITHOUT Crema (no -H:+RuntimeClassLoading and
+# no -H:+GraalJITCompileAtRuntime), with plugins baked in as PREBUILT, ISOLATED ClassRealms —
+# snapshotted into the image heap at build time.
 #
-# Unlike the "flatten" approach (all baked plugins share the flat core realm, isolation lost),
-# each baked plugin gets its OWN ClassRealm, constructed in PrebuiltPluginRealms' static
-# initializer at IMAGE BUILD TIME and frozen into the image (see PrebuiltPluginRealms.java).
-# Every other plugin still resolves dynamically at runtime via Crema (RuntimeClassLoading).
+# Same realm construction as the crema variant (each baked plugin gets its OWN ClassRealm, built
+# in PrebuiltPluginRealms' static initializer at IMAGE BUILD TIME — see PrebuiltPluginRealms.java),
+# but the image cannot load classes at run time. The consequences:
+#   - EVERY plugin a build requests must be baked, at the exact version (and per-plugin
+#     <dependencies>) the build resolves — the dynamic-resolution fallback that Crema provides on
+#     any routing miss does not exist here, so a miss fails the build at plugin realm creation.
+#   - In exchange, this builds on a STOCK GraalVM release (no development-only options needed)
+#     and skips Crema's runtime class-loading machinery entirely.
 #
 # Usage:
-#   ./build-nmvn-prebuilt.sh [groupId:artifactId:version[|deps] ...]
+#   ./build-scripts/non-crema/build-nmvn-prebuilt.sh [groupId:artifactId:version[|deps] ...]
 #
 # Plugins to bake are passed as arguments (one g:a:v each, optionally with |canonical-deps for
-# per-plugin <dependencies>). Callers:
+# per-plugin <dependencies>). Callers (in build-scripts/, selected via NMVN_VARIANT=non-crema):
 #   - build-nmvn-catalog.sh  (product: GAVs from catalog.json)
 #   - build-nmvn-for-pom.sh   (optional: effective-pom of one project)
 #
-# WITH NO ARGUMENTS it bakes nothing and produces a plain native image of Maven itself, where every
-# plugin — including the default lifecycle ones — is resolved and class-loaded at run time through
-# Crema. Use this as the baseline to measure baked images against:
+# WITH NO ARGUMENTS it bakes nothing: the resulting image can run pluginless commands
+# (--version, help) but cannot execute any build — useful only as a size/startup baseline.
 #
-#   ./build-nmvn-prebuilt.sh            # no plugins baked; all-dynamic (Crema)
-#   ./build-nmvn-prebuilt.sh g:a:v ...  # bake exactly these
-#
-# Note this is NOT the same as flatten-classloading's build-nmvn-no-crema.sh: that one has no
-# RuntimeClassLoading at all and instead bundles plugins onto the image classpath via
-# impl/maven-bundled-plugins. Here the plugin set is empty but Crema is still on, so plugins load
-# dynamically from the local repository exactly as on HotSpot.
+# See also: build-scripts/crema/build-nmvn-prebuilt.sh (dynamic fallback via Crema) and the older
+# flatten-classloading build-nmvn-no-crema.sh (no realms; plugins bundled onto the image
+# classpath via impl/maven-bundled-plugins).
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TARGET_DIR="$ROOT_DIR/apache-maven/target"
 
 # Layout (same local and CI — no env required):
 #   build/           — image binary + .plugins
 #   build/work/      — scratch (realms, javac, sidecar, sanitize)
 # Maven dist stays in apache-maven/target/ (not under build/).
 # Optional overrides: NMVN_OUT_DIR, NMVN_WORK_DIR, NMVN_MAVEN_HOME
-NMVN_OUT_DIR="${NMVN_OUT_DIR:-$SCRIPT_DIR/build}"
-NMVN_WORK_DIR="${NMVN_WORK_DIR:-$SCRIPT_DIR/build/work}"
+NMVN_OUT_DIR="${NMVN_OUT_DIR:-$ROOT_DIR/build}"
+NMVN_WORK_DIR="${NMVN_WORK_DIR:-$ROOT_DIR/build/work}"
 mkdir -p "$NMVN_OUT_DIR" "$NMVN_WORK_DIR"
 
 # Resolve Maven home: explicit override, else any packaged apache-maven-* under target/
@@ -64,11 +65,9 @@ fi
 # ---------------------------------------------------------------------------------------------------
 # 0a) TOOLCHAIN = JAVA_HOME/bin if set, else PATH.
 #
-#     Needs native-image with DEVELOPMENT options used by baked realms:
-#       -H:+RuntimeClassLoading (Crema)
-#       -H:+GraalJITCompileAtRuntime
-#     Those are not on every GraalVM release; fail fast with a clear message if missing so we do
-#     not burn tens of minutes resolving plugins before native-image rejects the flags.
+#     Unlike the crema variant, no development-only native-image options are required
+#     (-H:+RuntimeClassLoading / -H:+GraalJITCompileAtRuntime are not used), so any stock
+#     GraalVM release that ships native-image works.
 #
 #     Windows ships native-image.cmd (not a bare "native-image" Unix binary); resolve both.
 # ---------------------------------------------------------------------------------------------------
@@ -177,22 +176,6 @@ if ! command -v java >/dev/null 2>&1 && ! command -v java.exe >/dev/null 2>&1; t
   exit 1
 fi
 
-EXPERT_OPTIONS="$(run_native_image --expert-options-all 2>&1 || true)"
-# Matched with a shell 'case', NOT 'printf ... | grep -q': grep -q exits on the first match and closes
-# the pipe, printf then dies of SIGPIPE, and under 'set -o pipefail' the pipeline reports THAT failure
-# — so a successful match would look like a missing option and every toolchain would be rejected.
-for required in RuntimeClassLoading GraalJITCompileAtRuntime; do
-  if case "$EXPERT_OPTIONS" in *"$required"*) false ;; *) true ;; esac; then
-    echo "Error: this native-image does not support -H:±$required"
-    echo "       (required for nmvn prebaked plugin realms / Crema):"
-    echo "         path:    $NATIVE_IMAGE"
-    echo "         version: $(run_native_image --version 2>&1 | head -1)"
-    echo "       Use a GraalVM build that includes RuntimeClassLoading and"
-    echo "       GraalJITCompileAtRuntime, and put its bin/ first on PATH."
-    exit 1
-  fi
-done
-
 echo ">>> native-image: $NATIVE_IMAGE"
 echo ">>>               $(run_native_image --version 2>&1 | head -1)"
 # Which launchers this install actually ships — a .cmd means every invocation pays the cmd.exe
@@ -206,16 +189,13 @@ if [ -n "${JAVA_HOME:-}" ]; then
 fi
 
 # Baked ("supported") plugins, one "g:a:v[|deps]" per argument. Versions MUST match what builds will
-# request (explicit pins or the default lifecycle bindings of this Maven snapshot) — routing falls
-# back to dynamic resolution on any version skew, so a baked-but-never-requested version is pure
-# dead weight in the image.
+# request (explicit pins or the default lifecycle bindings of this Maven snapshot) — routing misses
+# on any version skew, and WITHOUT Crema there is no dynamic fallback: a missed plugin fails the
+# build at plugin realm creation, so a wrong baked version is not dead weight but a broken image.
 #
-# NO ARGUMENTS = bake nothing: a plain native image of Maven itself, in which EVERY plugin (including
-# the default lifecycle ones) is resolved and class-loaded at run time through Crema. That is the
-# baseline the baked images are measured against, and it is the honest default — the previous
-# hardcoded pair baked a maven-compiler-plugin version no current build requests, so it silently
-# fell back to dynamic anyway. Both real callers (build-nmvn-catalog.sh, build-nmvn-for-pom.sh)
-# always pass an explicit list, so no existing invocation changes behaviour.
+# NO ARGUMENTS = bake nothing: a plugin-less native image of Maven that can run --version/help but
+# no build (useful only as a size/startup baseline). Both real callers (build-nmvn-catalog.sh,
+# build-nmvn-for-pom.sh) always pass an explicit list.
 PLUGINS=()
 if [ "$#" -gt 0 ]; then
   PLUGINS=("$@")
@@ -517,8 +497,8 @@ PY
   # library as a Maven dependency and does not shade it. On HotSpot the plugin still works because
   # those members are never reflected; at bake time PrebuiltPluginRealms walks getDeclaredMethods
   # of every realm class, hits NoClassDefFoundError: KSerializer, poisons XmlElement, and the
-  # poison cascades to K2JVMCompileMojo — the whole plugin is then SKIPPED->dynamic. Under Crema
-  # that fallback fails kapt with IncompatibleClassChangeError on kotlin-reflect enum bodies.
+  # poison cascades to K2JVMCompileMojo — the whole plugin is then SKIPPED->dynamic, and without
+  # Crema that dynamic fallback cannot load anything, so the plugin would be unusable outright.
   # Inject kotlinx-serialization-core-jvm so the bake gate keeps the mojos.
   if printf '%s' "$PLUGIN_JARS" | tr ':' '\n' | grep -q '/kotlin-compiler-embeddable-'; then
     SER_VER="${KOTLINX_SERIALIZATION_VERSION:-1.9.0}"
@@ -607,11 +587,12 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
 
-# use Maven to prepare the prebuilt-feature JAR
-$MAVEN_HOME/bin/mvn -q -pl native/prebuilt-feature/ package -am -DskipTests
+# use Maven to prepare the prebuilt-feature JAR (-pl paths resolve against the cwd, so run
+# from the repo root — this script itself lives in build-scripts/non-crema/)
+( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/prebuilt-feature/ package -am -DskipTests )
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
-cp native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
+cp "$ROOT_DIR"/native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
 # ---------------------------------------------------------------------------------------------------
@@ -628,7 +609,8 @@ cp_append "$SIDECAR_JAR"
 # The guarded block below is deliberately left unindented: it contains <<'PY' heredocs whose
 # terminators must sit at column 0.
 if [ "${#PLUGINS[@]}" -eq 0 ]; then
-echo ">>> No plugins baked — every plugin resolves dynamically via Crema at run time."
+echo ">>> WARNING: no plugins baked and this image has NO runtime class loading (non-crema) —"
+echo ">>>          it can run pluginless commands (--version, help) but no actual build."
 else
 echo ">>> Realm spec ($SPEC_FILE):"
 # Verify the spec as BYTES before any Java reads it: every line must be "coords=jars" with no CR and
@@ -661,8 +643,8 @@ for n, line in enumerate(lines, 1):
 print(f">>>   {len(lines)} plugin realm(s)")
 PY
 echo ">>> Sanitizing realm jars + link probe ..."
-# use Maven to prepare the sanitizing JAR
-$MAVEN_HOME/bin/mvn -q -pl native/sanitize/ package -am -DskipTests
+# use Maven to prepare the sanitizing JAR (run from the repo root — see the sidecar build above)
+( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/sanitize/ package -am -DskipTests )
 # JVMCI flags: the tool runs the SAME ResolvedJavaType.link() SVM runs on registered classes,
 # against an exact replica of each baked realm; failures land in unlinkable.txt and are dropped
 # from the baked maps (see PrebuiltPluginRealms.loadAllClasses). Runs in this throwaway JVM
@@ -670,7 +652,7 @@ $MAVEN_HOME/bin/mvn -q -pl native/sanitize/ package -am -DskipTests
 # Write sanitized spec to a file (not stdout→shell) so newlines / Windows paths are preserved.
 TOOLS_CP="$(to_cp_path "$SIDECAR_JAR")"
 SANITIZE_JAR="$NMVN_WORK_DIR/nmvn-sanitize.jar"
-cp native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
+cp "$ROOT_DIR"/native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
 SANITIZE_CP="$(to_cp_path "$SANITIZE_JAR")"
 java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
@@ -688,40 +670,6 @@ fi
 #                                    runs that initializer at build time and snapshots the realms
 # ---------------------------------------------------------------------------------------------------
 echo ">>> Building native image ..."
-#native-image \
-#  -classpath "$CLASSPATH" \
-#  -Dnmvn.prebuilt.plugins="$PREBUILT_SPEC" \
-#  -Dguice_bytecode_gen_option=DISABLED \
-#  -march=native \
-#  --no-fallback \
-#  -H:+UnlockExperimentalVMOptions \
-#  -H:+ReportExceptionStackTraces \
-#  -H:+AllowJRTFileSystem \
-#  -H:+RuntimeClassLoading \
-#  -H:+GraalJITCompileAtRuntime \
-#  -H:EnableURLProtocols=jar \
-#  -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*' \
-#  -H:IncludeResources='org/apache/maven/plugins/clean/.*' \
-#  -H:ConfigurationFileDirectories=prebuilt-reflection,reflection-crema \
-#  -H:Preserve=all \
-#  -H:Preserve=module=java.compiler \
-#  -H:Preserve=module=jdk.compiler \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED \
-#  --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
-#  --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
-#  --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED \
-#  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,org.apache.maven.plugin.descriptor,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool' \
-#  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary,jdk.internal.jrtfs.SystemImage \
-#  org.codehaus.plexus.classworlds.launcher.Launcher \
-#  nmvn-native
 
 # Heap for the builder JVM. Default 80% of machine RAM; override if the box is shared or larger.
 # Analysis of embabel (kotlin+spotbugs+site fully reflected) OOMs around 50GiB — prefer skipping
@@ -760,12 +708,13 @@ NATIVE_IMAGE_ARGS=(
   -H:-ParseRuntimeOptions
   -H:+ReportExceptionStackTraces
   -H:+AllowJRTFileSystem
-  -H:+RuntimeClassLoading
-  -H:+GraalJITCompileAtRuntime
+  # No -H:+RuntimeClassLoading / -H:+GraalJITCompileAtRuntime here — that is the point of this
+  # variant: baked realms are frozen into the image heap at build time and need neither, while
+  # anything NOT baked cannot be class-loaded at run time at all.
   -H:EnableURLProtocols=jar
   -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
   -H:IncludeResources='org/apache/maven/plugins/clean/.*'
-  -H:ConfigurationFileDirectories=reflection-min
+  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-min")"
   -H:Preserve=module=java.base
   -H:Preserve=module=java.logging
   -H:Preserve=module=java.xml

@@ -11,10 +11,13 @@
 # version that this Maven would never request is dead weight in the image.
 #
 # Usage:
-#   ./build-nmvn-for-pom.sh <pom.xml | project-dir> [--plugins-only]
+#   ./build-scripts/build-nmvn-for-pom.sh <pom.xml | project-dir> [--plugins-only]
 #
 #   --plugins-only  print the derived g:a:v list (one per line) and exit without building;
 #                   useful as the analysis step of a build-service pipeline.
+#
+# Variant: NMVN_VARIANT=crema (default) or non-crema — selects which
+# build-scripts/<variant>/build-nmvn-prebuilt.sh does the actual image build.
 #
 # Notes / limitations:
 #  - Profiles: only plugins of profiles active during extraction are seen. Pass a representative
@@ -33,8 +36,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TARGET_DIR="$ROOT_DIR/apache-maven/target"
 MAVEN_HOME="$TARGET_DIR/apache-maven-4.1.0-SNAPSHOT"
+
+NMVN_VARIANT="${NMVN_VARIANT:-crema}"
+PREBUILT="$SCRIPT_DIR/$NMVN_VARIANT/build-nmvn-prebuilt.sh"
+if [ ! -f "$PREBUILT" ]; then
+  echo "Error: NMVN_VARIANT='$NMVN_VARIANT' has no $PREBUILT (expected 'crema' or 'non-crema')" >&2
+  exit 2
+fi
 
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <pom.xml | project-dir> [--plugins-only]"
@@ -65,7 +76,7 @@ if [ ! -x "$MVN" ]; then
   tar -xzf "$TARBALL" -C "$TARGET_DIR"
 fi
 
-WORK="$SCRIPT_DIR/.prebuilt-work"
+WORK="$ROOT_DIR/.prebuilt-work"
 mkdir -p "$WORK"
 EFF="$WORK/effective-pom.xml"
 rm -f "$EFF"
@@ -192,4 +203,4 @@ if [ "$PLUGINS_ONLY" -eq 1 ]; then
   exit 0
 fi
 
-exec "$SCRIPT_DIR/build-nmvn-prebuilt.sh" "${GAVS[@]}"
+exec "$PREBUILT" "${GAVS[@]}"

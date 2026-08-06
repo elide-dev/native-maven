@@ -13,7 +13,7 @@ Pipeline
     build/catalogs/nmvn-spring-<version>.json
             │
             ▼
-    ../build-nmvn-catalog.sh build/catalogs/nmvn-spring-<version>.json
+    ../build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-<version>.json
             │
             ▼
     build/nmvn-spring-<version>   (+ build/work/ scratch)
@@ -27,7 +27,7 @@ Product policy (current)
 Usage
 -----
     ./resolve_boot_catalog.py --boot-version 4.1.0 --language java
-    ../build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+    ../build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 """
 
 from __future__ import annotations
@@ -449,7 +449,7 @@ def main() -> None:
             cat_hint = str(cat_path)
         print(
             "\nNext: build the native image from this catalog:\n"
-            f"  ./build-nmvn-catalog.sh {cat_hint}\n"
+            f"  ./build-scripts/build-nmvn-catalog.sh {cat_hint}\n"
             f"  # from repo root; binary → build/{catalog['binary']}",
             file=sys.stderr,
         )

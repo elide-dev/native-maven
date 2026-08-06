@@ -23,31 +23,41 @@
 # catalog-specialized images for those stacks.
 #
 # Usage:
-#   ./build-nmvn-generic.sh [--dry-run]
+#   ./build-scripts/build-nmvn-generic.sh [--dry-run]
 #
 # Output (same conventions as build-nmvn-catalog.sh):
 #   build/nmvn-generic(.exe)   — the image
 #   build/nmvn-generic.plugins — newline-separated baked GAVs
-# Optional overrides: NMVN_OUT_DIR, NMVN_WORK_DIR, NMVN_MAVEN_HOME (all forwarded to prebuilt).
+# Optional overrides: NMVN_OUT_DIR, NMVN_WORK_DIR, NMVN_MAVEN_HOME (all forwarded to prebuilt),
+# NMVN_VARIANT=crema (default) or non-crema.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-NMVN_OUT_DIR="${NMVN_OUT_DIR:-$SCRIPT_DIR/build}"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+NMVN_OUT_DIR="${NMVN_OUT_DIR:-$ROOT_DIR/build}"
+
+NMVN_VARIANT="${NMVN_VARIANT:-crema}"
+PREBUILT="$SCRIPT_DIR/$NMVN_VARIANT/build-nmvn-prebuilt.sh"
+if [ ! -f "$PREBUILT" ]; then
+  echo "Error: NMVN_VARIANT='$NMVN_VARIANT' has no $PREBUILT (expected 'crema' or 'non-crema')" >&2
+  exit 2
+fi
 
 DRY_RUN=0
 if [ "${1:-}" = "--dry-run" ]; then
   DRY_RUN=1
 elif [ "$#" -gt 0 ]; then
-  echo "Usage: ./build-nmvn-generic.sh [--dry-run]"
+  echo "Usage: ./build-scripts/build-nmvn-generic.sh [--dry-run]"
   echo "       (plugins are not arguments here — the default-lifecycle set is resolved"
-  echo "        from the Maven dist; use build-nmvn-prebuilt.sh to bake an explicit list)"
+  echo "        from the Maven dist; use build-scripts/<variant>/build-nmvn-prebuilt.sh"
+  echo "        to bake an explicit list)"
   exit 1
 fi
 
 # Resolve the Maven dist exactly like build-nmvn-prebuilt.sh: explicit override, else any
 # packaged apache-maven-* under target/ (CI strips -SNAPSHOT; local keeps it).
-TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
+TARGET_DIR="$ROOT_DIR/apache-maven/target"
 if [ -n "${NMVN_MAVEN_HOME:-}" ]; then
   MAVEN_HOME="$NMVN_MAVEN_HOME"
 else
@@ -146,11 +156,11 @@ fi
 rm -f "$NMVN_OUT_DIR/nmvn-native" "$NMVN_OUT_DIR/nmvn-native.exe"
 
 (
-  cd "$SCRIPT_DIR"
+  cd "$ROOT_DIR"
   export NMVN_OUT_DIR
   [ -n "${NMVN_WORK_DIR:-}" ] && export NMVN_WORK_DIR
   [ -n "${NMVN_MAVEN_HOME:-}" ] && export NMVN_MAVEN_HOME
-  ./build-nmvn-prebuilt.sh "${GAVS[@]}"
+  "$PREBUILT" "${GAVS[@]}"
 )
 
 OUT_SRC=""

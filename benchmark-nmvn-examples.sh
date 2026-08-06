@@ -102,7 +102,7 @@ esac
 
 if [ ! -x "$NMVN_BIN" ]; then
   echo "Error: native binary not found/executable: $NMVN_BIN" >&2
-  echo "       Build one first, e.g.: ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-$SPRING_FULL.json" >&2
+  echo "       Build one first, e.g.: ./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-$SPRING_FULL.json" >&2
   exit 1
 fi
 
