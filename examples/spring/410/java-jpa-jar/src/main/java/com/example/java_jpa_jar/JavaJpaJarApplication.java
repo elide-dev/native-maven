@@ -1,13 +1,13 @@
-package com.example.java_jpa_stack;
+package com.example.java_jpa_jar;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class JavaJpaStackApplication {
+public class JavaJpaJarApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(JavaJpaStackApplication.class, args);
+		SpringApplication.run(JavaJpaJarApplication.class, args);
 	}
 
 }
