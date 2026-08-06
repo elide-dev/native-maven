@@ -672,11 +672,14 @@ TOOLS_CP="$(to_cp_path "$SIDECAR_JAR")"
 SANITIZE_JAR="$NMVN_WORK_DIR/nmvn-sanitize.jar"
 cp native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
 SANITIZE_CP="$(to_cp_path "$SANITIZE_JAR")"
+LAUNCHER_JAR="$NMVN_WORK_DIR/nmvn-launcher.jar"
+cp native/launcher/target/launcher-4.1.0*.jar "$LAUNCHER_JAR"
+LAUNCHER_CP="$(to_cp_path "$LAUNCHER_JAR")"
 java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
-  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}${SANITIZE_CP}" \
+  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}${SANITIZE_CP}${CP_SEP}${LAUNCHER_CP}" \
   org.apache.maven.sanitize.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
 fi
 
@@ -808,7 +811,7 @@ NATIVE_IMAGE_ARGS=(
   # does on HotSpot Windows today.
   --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm,jdk.internal.jrtfs.SystemImage
   --features=nmvn.PrebuiltReflectionFeature
-  nmvn.NmvnLauncher
+  nmvn.launcher.NmvnLauncher
   "$(to_cp_path "$NMVN_OUT_DIR/nmvn-native")"
 )
 

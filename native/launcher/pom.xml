@@ -6,9 +6,18 @@
     <artifactId>native</artifactId>
     <version>4.1.0-SNAPSHOT</version>
   </parent>
-  <artifactId>prebuilt-feature</artifactId>
+  <artifactId>launcher</artifactId>
   <packaging>jar</packaging>
+  <properties>
+    <exec.mainClass>nmvn.launcher.NmvnLauncher</exec.mainClass>
+  </properties>
   <dependencies>
+    <dependency>
+      <groupId>org.apache.maven</groupId>
+      <artifactId>prebuilt-feature</artifactId>
+      <version>4.1.0-SNAPSHOT</version>
+      <type>jar</type>
+    </dependency>
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-api-annotations</artifactId>
