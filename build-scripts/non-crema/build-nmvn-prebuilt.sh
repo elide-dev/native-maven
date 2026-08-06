@@ -708,9 +708,6 @@ NATIVE_IMAGE_ARGS=(
   -H:-ParseRuntimeOptions
   -H:+ReportExceptionStackTraces
   -H:+AllowJRTFileSystem
-  # No -H:+RuntimeClassLoading / -H:+GraalJITCompileAtRuntime here — that is the point of this
-  # variant: baked realms are frozen into the image heap at build time and need neither, while
-  # anything NOT baked cannot be class-loaded at run time at all.
   -H:EnableURLProtocols=jar
   -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
   -H:IncludeResources='org/apache/maven/plugins/clean/.*'
