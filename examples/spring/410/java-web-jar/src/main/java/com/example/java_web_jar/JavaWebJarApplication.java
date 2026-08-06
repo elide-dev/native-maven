@@ -1,13 +1,13 @@
-package com.example.java_baseline_jar;
+package com.example.java_web_jar;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class JavaBaselineJarApplication {
+public class JavaWebJarApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(JavaBaselineJarApplication.class, args);
+		SpringApplication.run(JavaWebJarApplication.class, args);
 	}
 
 }

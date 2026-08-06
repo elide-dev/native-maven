@@ -1,10 +1,10 @@
-package com.example.java_baseline_jar;
+package com.example.java_web_jar;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class JavaBaselineJarApplicationTests {
+class JavaWebJarApplicationTests {
 
 	@Test
 	void contextLoads() {
