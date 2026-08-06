@@ -608,11 +608,17 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
 
 # use Maven to prepare the prebuilt-feature JAR
-$MAVEN_HOME/bin/mvn -q -pl native/prebuilt-feature/ package -am -DskipTests
+$MAVEN_HOME/bin/mvn -q -pl native/launcher/ package -am -DskipTests
+
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
 cp native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
+
+# copy launcher JAR produced by Maven build
+LAUNCHER_JAR="$NMVN_WORK_DIR/nmvn-launcher.jar"
+cp native/launcher/target/launcher-4.1.0*.jar "$LAUNCHER_JAR"
+cp_append "$LAUNCHER_JAR"
 
 # ---------------------------------------------------------------------------------------------------
 # 3) Sanitize realm jars: strip EnclosingMethod/Signature attributes whose reflective parsing
@@ -672,14 +678,11 @@ TOOLS_CP="$(to_cp_path "$SIDECAR_JAR")"
 SANITIZE_JAR="$NMVN_WORK_DIR/nmvn-sanitize.jar"
 cp native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
 SANITIZE_CP="$(to_cp_path "$SANITIZE_JAR")"
-LAUNCHER_JAR="$NMVN_WORK_DIR/nmvn-launcher.jar"
-cp native/launcher/target/launcher-4.1.0*.jar "$LAUNCHER_JAR"
-LAUNCHER_CP="$(to_cp_path "$LAUNCHER_JAR")"
 java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED \
   --add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED \
-  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}${SANITIZE_CP}${CP_SEP}${LAUNCHER_CP}" \
+  -cp "${CLASSPATH}${CP_SEP}${TOOLS_CP}${CP_SEP}${SANITIZE_CP}" \
   org.apache.maven.sanitize.SanitizeRealmJars "$SPEC_FILE" "$WORK/sanitized" "$WORK/unlinkable.txt" "$SPEC_FILE"
 fi
 
