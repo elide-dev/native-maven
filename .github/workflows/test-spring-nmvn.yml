@@ -85,7 +85,7 @@ jobs:
       - name: Build Maven distribution
         run: |
           chmod +x ./mvnw
-          ./mvnw clean install -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+          ./mvnw clean install -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true -DdistributionTargetDir="$PWD/apache-maven/target/apache-maven-4.1.0-SNAPSHOT"
 
       - name: Run Native Maven Distribution in JVM mode
         run: |
