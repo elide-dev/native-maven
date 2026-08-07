@@ -609,13 +609,18 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
 
-# use Maven to prepare the prebuilt-feature JAR (-pl paths resolve against the cwd, so run
+# use Maven to prepare the launcher JAR (-pl paths resolve against the cwd, so run
 # from the repo root — this script itself lives in build-scripts/crema/)
-( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/prebuilt-feature/ package -am -DskipTests )
+( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/launcher/ package -am -DskipTests )
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
 cp "$ROOT_DIR"/native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
+
+# copy launcher JAR produced by Maven build
+LAUNCHER_JAR="$NMVN_WORK_DIR/nmvn-launcher.jar"
+cp native/launcher/target/launcher-4.1.0*.jar "$LAUNCHER_JAR"
+cp_append "$LAUNCHER_JAR"
 
 # ---------------------------------------------------------------------------------------------------
 # 3) Sanitize realm jars: strip EnclosingMethod/Signature attributes whose reflective parsing
@@ -811,7 +816,7 @@ NATIVE_IMAGE_ARGS=(
   # does on HotSpot Windows today.
   --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm,jdk.internal.jrtfs.SystemImage
   --features=nmvn.PrebuiltReflectionFeature
-  nmvn.NmvnLauncher
+  nmvn.launcher.NmvnLauncher
   "$(to_cp_path "$NMVN_OUT_DIR/nmvn-native")"
 )
 

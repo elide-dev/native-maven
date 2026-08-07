@@ -8,11 +8,6 @@
   </parent>
   <artifactId>prebuilt-feature</artifactId>
   <packaging>jar</packaging>
-  <properties>
-    <!-- SanitizeRealmJars is using API from version 25 -->
-    <minimalJavaBuildVersion>25</minimalJavaBuildVersion>
-    <maven.compiler.release>${minimalJavaBuildVersion}</maven.compiler.release>
-  </properties>
   <dependencies>
     <dependency>
       <groupId>org.apache.maven</groupId>
