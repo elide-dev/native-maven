@@ -1,0 +1,121 @@
+# Build the crema nmvn image per Spring Boot version and smoke-test it: every example project
+# under examples/spring/<version>/ must build with the freshly built binary
+# (./test-nmvn-examples.sh, goals: clean package -DskipTests=true).
+#
+# Scope (deliberately smaller than release-spring-nmvn.yml, which this mirrors step-for-step):
+#   - crema variant only (NMVN_VARIANT default) — extend the matrix when non-crema matters
+#   - linux-x86_64 only — image builds are expensive; the release workflow covers all platforms
+#   - one matrix job per Boot version so the two image builds run in parallel
+#
+# Known flake: the native-image builder can die with "NativeImageForkJoinWorkerThread not
+# available in this platform" — a GraalVM builder race, not caused by any change under test.
+# Re-run the job.
+#
+name: Test Spring Native Maven
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  # https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4
+  GRAAL_TAG: graal-25.2.4
+  GRAAL_FILE: graalvm-community-jdk-25i2-25.0.4_linux-x64_bin.tar.gz
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        boot: ["4.1.0", "4.0.7"]
+
+    runs-on: ubuntu-latest-16-cores
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download and install GraalVM 25.2
+        run: |
+          set -euo pipefail
+          GRAAL_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${GRAAL_TAG}/${GRAAL_FILE}"
+          INSTALL_ROOT="${RUNNER_TEMP:-/tmp}/graalvm-25.2"
+          ARCHIVE="${RUNNER_TEMP:-/tmp}/${GRAAL_FILE}"
+
+          echo ">>> Downloading ${GRAAL_URL}"
+          rm -rf "${INSTALL_ROOT}"
+          mkdir -p "${INSTALL_ROOT}"
+          curl -fsSL "${GRAAL_URL}" -o "${ARCHIVE}"
+          tar -xzf "${ARCHIVE}" -C "${INSTALL_ROOT}"
+
+          JAVA_HOME_CANDIDATE=""
+          for d in "${INSTALL_ROOT}"/*; do
+            if [ -d "$d" ] && [ -f "${d}/bin/native-image" ]; then
+              JAVA_HOME_CANDIDATE="$d"
+              break
+            fi
+          done
+          if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
+            echo "::error::Could not find native-image under ${INSTALL_ROOT}"
+            find "${INSTALL_ROOT}" -maxdepth 5 -type f -name 'native-image' 2>/dev/null | head -20 || true
+            exit 1
+          fi
+
+          # Subsequent steps inherit these (GITHUB_ENV / GITHUB_PATH).
+          echo "JAVA_HOME=${JAVA_HOME_CANDIDATE}" >> "$GITHUB_ENV"
+          echo "${JAVA_HOME_CANDIDATE}/bin" >> "$GITHUB_PATH"
+          echo ">>> JAVA_HOME=${JAVA_HOME_CANDIDATE}"
+
+      - name: Strip SNAPSHOT from versions
+        run: LC_ALL=C find . -name 'pom.xml' -exec sed -i'' -e 's/-SNAPSHOT//g' {} +
+
+      - name: Build Maven distribution
+        run: |
+          chmod +x ./mvnw
+          ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+
+      - name: Build crema image for Boot ${{ matrix.boot }}
+        run: |
+          set -euo pipefail
+          chmod +x catalog/resolve_boot_catalog.py build-scripts/build-nmvn-catalog.sh \
+            build-scripts/crema/build-nmvn-prebuilt.sh
+
+          rm -rf build
+          ./catalog/resolve_boot_catalog.py \
+            --boot-version "${{ matrix.boot }}" \
+            --language java
+
+          ./build-scripts/build-nmvn-catalog.sh "build/catalogs/nmvn-spring-${{ matrix.boot }}.json"
+
+          BIN="build/nmvn-spring-${{ matrix.boot }}"
+          if [ ! -f "${BIN}" ]; then
+            echo "::error::Expected binary ${BIN} after build for Boot ${{ matrix.boot }}"
+            ls -la build/ || true
+            exit 1
+          fi
+
+      - name: Smoke-test examples/spring against the image
+        run: |
+          set -euo pipefail
+          chmod +x test-nmvn-examples.sh
+          ./test-nmvn-examples.sh \
+            --spring "${{ matrix.boot }}" \
+            --nmvn-binary "build/nmvn-spring-${{ matrix.boot }}" \
+            --keep-going
+
+      - name: Clean workspace outputs
+        if: always()
+        run: rm -rf build

@@ -3,30 +3,41 @@
 # Build specialized nmvn native image(s) from a catalog produced by resolve_boot_catalog.py.
 #
 #   ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
-#   ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+#   ./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 #   # → build/nmvn-spring-4.1.0
 ##
-# Delegates each catalog entry to build-nmvn-prebuilt.sh with that entry's plugin GAV list.
+# Delegates each catalog entry to <variant>/build-nmvn-prebuilt.sh with that entry's plugin GAV
+# list. The variant is chosen via NMVN_VARIANT (default: crema):
+#   crema      — unbaked plugins still load dynamically at run time (needs a Crema-enabled GraalVM)
+#   non-crema  — no runtime class loading; ONLY the baked plugins work (stock GraalVM suffices)
 #
 # Cost: full GraalVM native-image of ~1GB; tens of minutes and many GB RAM. Prefer --dry-run first.
 #
 # Usage:
-#   ./build-nmvn-catalog.sh <catalog.json> [--only NAME[,NAME...]] [--dry-run]
+#   ./build-scripts/build-nmvn-catalog.sh <catalog.json> [--only NAME[,NAME...]] [--dry-run]
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+NMVN_VARIANT="${NMVN_VARIANT:-crema}"
+PREBUILT="$SCRIPT_DIR/$NMVN_VARIANT/build-nmvn-prebuilt.sh"
+if [ ! -f "$PREBUILT" ]; then
+  echo "Error: NMVN_VARIANT='$NMVN_VARIANT' has no $PREBUILT (expected 'crema' or 'non-crema')" >&2
+  exit 2
+fi
 
 # Same layout as build-nmvn-prebuilt.sh (local == CI):
 #   build/       — final binary + .plugins
 #   build/work/  — scratch
-NMVN_OUT_DIR="${NMVN_OUT_DIR:-$SCRIPT_DIR/build}"
+NMVN_OUT_DIR="${NMVN_OUT_DIR:-$ROOT_DIR/build}"
 mkdir -p "$NMVN_OUT_DIR"
 
 usage() {
   cat <<'EOF' >&2
 Usage:
-  ./build-nmvn-catalog.sh <catalog.json> [--only NAME[,NAME...]] [--dry-run]
+  ./build-scripts/build-nmvn-catalog.sh <catalog.json> [--only NAME[,NAME...]] [--dry-run]
 
   <catalog.json>   Required. Path to a catalog for one Spring Boot version
                    (from resolve_boot_catalog.py). One file per Boot line, e.g.:
@@ -37,12 +48,13 @@ Usage:
 
   Output (default): build/nmvn-spring-<bootVersion>
   Scratch:          build/work/
+  Variant:          NMVN_VARIANT=crema (default) or non-crema
 
 Create a catalog first, then build:
 
   ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
-  ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json --dry-run
-  ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+  ./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json --dry-run
+  ./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 EOF
 }
 
@@ -105,7 +117,7 @@ if [ ! -f "$CATALOG" ]; then
   echo "    --boot-version 4.1.0 \\" >&2
   echo "    --language java" >&2
   echo >&2
-  echo "  ./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json" >&2
+  echo "  ./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json" >&2
   exit 1
 fi
 
@@ -178,11 +190,11 @@ PY
   rm -f "$NMVN_OUT_DIR/nmvn-native" "$NMVN_OUT_DIR/nmvn-native.exe"
 
   if (
-    cd "$SCRIPT_DIR"
+    cd "$ROOT_DIR"
     export NMVN_OUT_DIR
     # Only forward work dir when the caller set it (empty would defeat prebuilt's default).
     [ -n "${NMVN_WORK_DIR:-}" ] && export NMVN_WORK_DIR
-    ./build-nmvn-prebuilt.sh "${GAVS[@]}"
+    "$PREBUILT" "${GAVS[@]}"
   ); then
     OUT_SRC=""
     OUT_DST="$NMVN_OUT_DIR/$NAME"

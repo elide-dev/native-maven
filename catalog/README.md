@@ -12,7 +12,7 @@
   build/catalogs/nmvn-spring-<boot>.json
               │
               ▼
-  build-nmvn-catalog.sh  →  build-nmvn-prebuilt.sh
+  build-scripts/build-nmvn-catalog.sh  →  build-scripts/<variant>/build-nmvn-prebuilt.sh
               │
               ▼
   build/nmvn-spring-<boot>
@@ -52,8 +52,8 @@
 # → build/catalogs/nmvn-spring-4.1.0.json
 # → build/work/catalog-probe-…  (scratch)
 
-./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json --dry-run
-./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json --dry-run
+./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 # → build/nmvn-spring-4.1.0
 # → build/nmvn-spring-4.1.0.plugins
 # → build/work/…  (scratch)
@@ -64,8 +64,8 @@ Multiple Boot versions:
 ```bash
 ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
 ./catalog/resolve_boot_catalog.py --boot-version 4.0.7 --language java
-./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
-./build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.0.7.json
+./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.0.7.json
 # → build/nmvn-spring-4.1.0
 # → build/nmvn-spring-4.0.7
 ```

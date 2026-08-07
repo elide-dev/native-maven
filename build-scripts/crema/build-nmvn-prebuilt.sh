@@ -9,10 +9,10 @@
 # Every other plugin still resolves dynamically at runtime via Crema (RuntimeClassLoading).
 #
 # Usage:
-#   ./build-nmvn-prebuilt.sh [groupId:artifactId:version[|deps] ...]
+#   ./build-scripts/crema/build-nmvn-prebuilt.sh [groupId:artifactId:version[|deps] ...]
 #
 # Plugins to bake are passed as arguments (one g:a:v each, optionally with |canonical-deps for
-# per-plugin <dependencies>). Callers:
+# per-plugin <dependencies>). Callers (in build-scripts/, variant chosen via NMVN_VARIANT):
 #   - build-nmvn-catalog.sh  (product: GAVs from catalog.json)
 #   - build-nmvn-for-pom.sh   (optional: effective-pom of one project)
 #
@@ -20,26 +20,28 @@
 # plugin — including the default lifecycle ones — is resolved and class-loaded at run time through
 # Crema. Use this as the baseline to measure baked images against:
 #
-#   ./build-nmvn-prebuilt.sh            # no plugins baked; all-dynamic (Crema)
-#   ./build-nmvn-prebuilt.sh g:a:v ...  # bake exactly these
+#   ./build-scripts/crema/build-nmvn-prebuilt.sh            # no plugins baked; all-dynamic (Crema)
+#   ./build-scripts/crema/build-nmvn-prebuilt.sh g:a:v ...  # bake exactly these
 #
-# Note this is NOT the same as flatten-classloading's build-nmvn-no-crema.sh: that one has no
-# RuntimeClassLoading at all and instead bundles plugins onto the image classpath via
-# impl/maven-bundled-plugins. Here the plugin set is empty but Crema is still on, so plugins load
-# dynamically from the local repository exactly as on HotSpot.
+# Note this is NOT the same as build-scripts/non-crema/build-nmvn-prebuilt.sh (or the older
+# flatten-classloading build-nmvn-no-crema.sh): those have no RuntimeClassLoading at all, so
+# every plugin a build requests must be baked (or bundled on the image classpath). Here the
+# plugin set may be empty but Crema is still on, so plugins load dynamically from the local
+# repository exactly as on HotSpot.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET_DIR="$SCRIPT_DIR/apache-maven/target"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TARGET_DIR="$ROOT_DIR/apache-maven/target"
 
 # Layout (same local and CI — no env required):
 #   build/           — image binary + .plugins
 #   build/work/      — scratch (realms, javac, sidecar, sanitize)
 # Maven dist stays in apache-maven/target/ (not under build/).
 # Optional overrides: NMVN_OUT_DIR, NMVN_WORK_DIR, NMVN_MAVEN_HOME
-NMVN_OUT_DIR="${NMVN_OUT_DIR:-$SCRIPT_DIR/build}"
-NMVN_WORK_DIR="${NMVN_WORK_DIR:-$SCRIPT_DIR/build/work}"
+NMVN_OUT_DIR="${NMVN_OUT_DIR:-$ROOT_DIR/build}"
+NMVN_WORK_DIR="${NMVN_WORK_DIR:-$ROOT_DIR/build/work}"
 mkdir -p "$NMVN_OUT_DIR" "$NMVN_WORK_DIR"
 
 # Resolve Maven home: explicit override, else any packaged apache-maven-* under target/
@@ -607,12 +609,12 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
 
-# use Maven to prepare the prebuilt-feature JAR
-$MAVEN_HOME/bin/mvn -q -pl native/launcher/ package -am -DskipTests
-
+# use Maven to prepare the launcher JAR (-pl paths resolve against the cwd, so run
+# from the repo root — this script itself lives in build-scripts/crema/)
+( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/launcher/ package -am -DskipTests )
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
-cp native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
+cp "$ROOT_DIR"/native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
 # copy launcher JAR produced by Maven build
@@ -667,8 +669,8 @@ for n, line in enumerate(lines, 1):
 print(f">>>   {len(lines)} plugin realm(s)")
 PY
 echo ">>> Sanitizing realm jars + link probe ..."
-# use Maven to prepare the sanitizing JAR
-$MAVEN_HOME/bin/mvn -q -pl native/sanitize/ package -am -DskipTests
+# use Maven to prepare the sanitizing JAR (run from the repo root — see the sidecar build above)
+( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/sanitize/ package -am -DskipTests )
 # JVMCI flags: the tool runs the SAME ResolvedJavaType.link() SVM runs on registered classes,
 # against an exact replica of each baked realm; failures land in unlinkable.txt and are dropped
 # from the baked maps (see PrebuiltPluginRealms.loadAllClasses). Runs in this throwaway JVM
@@ -676,7 +678,7 @@ $MAVEN_HOME/bin/mvn -q -pl native/sanitize/ package -am -DskipTests
 # Write sanitized spec to a file (not stdout→shell) so newlines / Windows paths are preserved.
 TOOLS_CP="$(to_cp_path "$SIDECAR_JAR")"
 SANITIZE_JAR="$NMVN_WORK_DIR/nmvn-sanitize.jar"
-cp native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
+cp "$ROOT_DIR"/native/sanitize/target/sanitize-4.1.0*.jar "$SANITIZE_JAR"
 SANITIZE_CP="$(to_cp_path "$SANITIZE_JAR")"
 java \
   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI \
@@ -771,7 +773,7 @@ NATIVE_IMAGE_ARGS=(
   -H:EnableURLProtocols=jar
   -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
   -H:IncludeResources='org/apache/maven/plugins/clean/.*'
-  -H:ConfigurationFileDirectories=reflection-min
+  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-min")"
   -H:Preserve=module=java.base
   -H:Preserve=module=java.logging
   -H:Preserve=module=java.xml
