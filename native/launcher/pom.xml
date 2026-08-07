@@ -8,6 +8,7 @@
   </parent>
   <artifactId>launcher</artifactId>
   <packaging>jar</packaging>
+  <name>Native Maven Distribution</name>
   <properties>
     <exec.mainClass>nmvn.launcher.NmvnLauncher</exec.mainClass>
     <exec.vmArgs>-Dnone</exec.vmArgs>
@@ -153,13 +154,11 @@
         <artifactId>exec-maven-plugin</artifactId>
         <configuration>
           <executable>${java.home}/bin/java</executable>
-          <commandlineArgs>
-            ${exec.vmArgs}
+          <commandlineArgs>${exec.vmArgs}
             --enable-native-access=ALL-UNNAMED
             -cp %classpath
             nmvn.launcher.NmvnLauncher
-            ${exec.appArgs}
-          </commandlineArgs>
+            ${exec.appArgs}</commandlineArgs>
         </configuration>
       </plugin>
     </plugins>
