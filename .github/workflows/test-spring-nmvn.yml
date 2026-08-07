@@ -85,7 +85,12 @@ jobs:
       - name: Build Maven distribution
         run: |
           chmod +x ./mvnw
-          ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+          ./mvnw clean install -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+
+      - name: Run Native Maven Distribution in JVM mode
+        run: |
+          chmod +x ./mvnw
+          ./mvnw -f native/launcher exec:exec -Dexec.appArgs="-f $PWD/examples/java-maven-sample-project/ clean package"
 
       - name: Build crema image for Boot ${{ matrix.boot }}
         run: |
