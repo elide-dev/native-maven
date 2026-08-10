@@ -698,6 +698,13 @@ NATIVE_IMAGE_ARGS=(
   -classpath "$CLASSPATH"
   ${PREBUILT_ARGS[@]+"${PREBUILT_ARGS[@]}"}
   -Dguice_bytecode_gen_option=DISABLED
+  # Optimize for size. Measured on this catalog (2026-08-10, A/B otherwise identical builds):
+  #   image size:      171.3 MiB with -Os vs 195.4 MiB without  (-24.1 MiB, -12%)
+  #   code area:       42.0 MiB vs 62.9 MiB                     (-33%)
+  #   example build:   ~1.32 s vs ~1.16 s clean package         (+14% wall time)
+  #   startup:         65 ms vs 62 ms --version                 (no difference)
+  # Drop this line first if users' build time matters more than image size.
+  -Os
   --no-fallback
   -H:+UnlockExperimentalVMOptions
   # SVM by default parses and CONSUMES -D/-XX/-Xm* arguments at VM startup, stripping them from
@@ -754,27 +761,34 @@ NATIVE_IMAGE_ARGS=(
   # then keep ONLY the '$__sisu' entries: the agent also records every plugin class the JVM loaded
   # from a plugin realm (~4900 of them), which this image bakes into realms and must not predefine.
   -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-non-crema")"
-  -H:Preserve=module=java.base
-  -H:Preserve=module=java.logging
-  -H:Preserve=module=java.xml
-  -H:Preserve=module=java.desktop
-  -H:Preserve=module=java.compiler
-  -H:Preserve=module=jdk.compiler
-  -H:Preserve=package=org.apache.maven.*
-  -H:Preserve=package=com.ctc.wstx.*
-  -H:Preserve=package=org.apache.commons.logging.impl.*
-  -H:Preserve=package=org.eclipse.aether.*
-  -H:Preserve=package=org.slf4j.*
-  -H:Preserve=package=org.codehaus.plexus.*
-  -H:Preserve=package=nmvn.*
-  -H:Preserve=package=com.google.inject.*
-  -H:Preserve=package=com.google.common.*
-  -H:Preserve=package=org.eclipse.sisu.*
-  -H:Preserve=package=org.sonatype.*
-  -H:Preserve=package=org.fusesource.*
-  -H:Preserve=package=org.jline.*
-  -H:Preserve=package=javax.inject.*
-  -H:Preserve=module=jdk.unsupported
+  # JDK module preserves trimmed for image size (2026-08-10). -H:Preserve registers EVERY class
+  # of the selection for reflection AND JNI — the full set stood at 96,794 reflected types /
+  # 234k methods, with ~23MiB of JNIAccessibleMethod objects and MiBs of sun.awt.X11/javax.swing
+  # code in a build tool that never opens a window. Dropped: java.base, java.logging, java.xml,
+  # java.desktop, jdk.unsupported, and (second pass) java.compiler + jdk.compiler — their
+  # classes stay available through normal reachability, only the blanket keep-everything
+  # registration is gone. In-process javac survives on reachability alone: JavacTool is an
+  # --initialize-at-build-time root and plain compilation instantiates its internals directly
+  # (verified by the example suite compiling real sources). External annotation processors
+  # (lombok & co) load PROJECT classes at run time — impossible in this variant regardless of
+  # preserves. The compiler preserves were what still registered ~7.8k types for JNI access.
+  # Package preserves replaced by PRECISE metadata (2026-08-10). The blanket package= preserves
+  # (org.apache.maven.*, com.google.common.*, org.eclipse.aether.*, plexus, sisu, guice, jline,
+  # ...) registered ~45k types for reflection AND JNI to cover core's Guice/sisu DI — the image
+  # paid for it in code metadata, string data and JNIAccessibleMethod heap objects. Replaced by
+  # reflection-non-crema/reachability-metadata.json: ~1.2k entries captured with the
+  # native-image agent on a real JVM Maven build (clean package of a Boot example), merged with
+  # the hand-written proxy + jline FFM entries, with all captured JDK types hardened to
+  # allDeclaredConstructors/allPublicMethods/allDeclaredFields (plexus config converters look up
+  # members like Long.parseLong by reflection on paths the agent run did not take).
+  #
+  # COVERAGE CAVEAT: agent metadata covers what the capture workload exercised. A core path no
+  # example touches (deploy goal wiring, exotic mojo parameter types, error paths) can throw
+  # MissingReflectionRegistrationError at run time. Re-capture (append, don't replace):
+  #   MAVEN_OPTS="-agentlib:native-image-agent=config-merge-dir=reflection-non-crema" \
+  #     apache-maven/target/apache-maven-*/bin/mvn -B <goals>   # on a representative project
+  # Realm (plugin) classes need no entries here — PrebuiltReflectionFeature registers them from
+  # the build-time realms; JSON could not resolve those names anyway.
   --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
   --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
   --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
