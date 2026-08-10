@@ -1,11 +1,13 @@
-# Build the crema nmvn image per Spring Boot version and smoke-test it: every example project
-# under examples/spring/<version>/ must build with the freshly built binary
-# (./test-nmvn-examples.sh, goals: clean package -DskipTests=true).
+# Build the nmvn image per Spring Boot version and variant (crema/non-crema) and smoke-test
+# it: every supported example project under examples/spring/<version>/ must build with the
+# freshly built binary (./test-nmvn-examples.sh, goals: clean package -DskipTests=true).
+# Projects a variant cannot support carry a .nmvn-unsupported-variants marker and are skipped
+# by the smoke test for that variant.
 #
 # Scope (deliberately smaller than release-spring-nmvn.yml, which this mirrors step-for-step):
-#   - crema variant only (NMVN_VARIANT default) — extend the matrix when non-crema matters
-#   - same platform matrix as the release workflow, crossed with the Boot versions
-#     (one image build per platform x Boot version job, all in parallel)
+#   - same platform matrix as the release workflow, crossed with the Boot versions and
+#     variants (crema/non-crema) — one image build per platform x Boot version x variant
+#     job, all in parallel
 #
 # Known flake: the native-image builder can die with "NativeImageForkJoinWorkerThread not
 # available in this platform" — a GraalVM builder race, not caused by any change under test.
@@ -35,12 +37,13 @@ jobs:
       fail-fast: false
       matrix:
         boot: ["4.1.0", "4.0.7"]
+        variant: ["crema", "non-crema"]
         os:
           - ubuntu-latest-16-cores
           - ubuntu-latest-32-cores-arm64
           - macos-arm64-cipool
           - windows-latest-16-cores
-        # Attach platform/graal_file to each os (merged into every boot x os combination).
+        # Attach platform/graal_file to each os (merged into every boot x os x variant combination).
         include:
           - os: ubuntu-latest-16-cores
             platform: linux-x86_64
@@ -145,18 +148,19 @@ jobs:
           chmod +x ./mvnw
           ./mvnw -f native/launcher exec:exec -Dexec.appArgs="-f $REPO_ROOT/examples/java-maven-sample-project/ clean package"
 
-      - name: Build crema image for Boot ${{ matrix.boot }}
+      - name: Build ${{ matrix.variant }} image for Boot ${{ matrix.boot }}
         run: |
           set -euo pipefail
           chmod +x catalog/resolve_boot_catalog.py build-scripts/build-nmvn-catalog.sh \
-            build-scripts/crema/build-nmvn-prebuilt.sh
+            "build-scripts/${{ matrix.variant }}/build-nmvn-prebuilt.sh"
 
           rm -rf build
           ./catalog/resolve_boot_catalog.py \
             --boot-version "${{ matrix.boot }}" \
             --language java
 
-          ./build-scripts/build-nmvn-catalog.sh "build/catalogs/nmvn-spring-${{ matrix.boot }}.json"
+          NMVN_VARIANT="${{ matrix.variant }}" \
+            ./build-scripts/build-nmvn-catalog.sh "build/catalogs/nmvn-spring-${{ matrix.boot }}.json"
 
           BIN="build/nmvn-spring-${{ matrix.boot }}"
           if [ -f "${BIN}.exe" ]; then
@@ -178,6 +182,7 @@ jobs:
           ./test-nmvn-examples.sh \
             --spring "${{ matrix.boot }}" \
             --nmvn-binary "${NMVN_BIN}" \
+            --variant "${{ matrix.variant }}" \
             --keep-going
 
       - name: Clean workspace outputs

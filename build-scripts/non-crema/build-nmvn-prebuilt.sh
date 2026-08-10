@@ -704,7 +704,7 @@ NATIVE_IMAGE_ARGS=(
   #   example build:   ~1.32 s vs ~1.16 s clean package         (+14% wall time)
   #   startup:         65 ms vs 62 ms --version                 (no difference)
   # Drop this line first if users' build time matters more than image size.
-  -Os
+  # -Os
   --no-fallback
   -H:+UnlockExperimentalVMOptions
   # SVM by default parses and CONSUMES -D/-XX/-Xm* arguments at VM startup, stripping them from
