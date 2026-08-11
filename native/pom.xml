@@ -13,6 +13,7 @@
     <module>prebuilt-feature</module>
     <module>sanitize</module>
     <module>launcher</module>
+    <module>plugin</module>
   </modules>
   <build>
     <plugins>
