@@ -587,13 +587,19 @@ rm -rf "$FEATURE_OUT" && mkdir -p "$FEATURE_OUT"
 # field would be read during analysis, and the build dies with "JVMCIRuntime should not appear in
 # the image" — which is exactly what running the probe in a throwaway JVM is meant to avoid.
 
-# use Maven to prepare the prebuilt-feature JAR (-pl paths resolve against the cwd, so run
-# from the repo root — this script itself lives in build-scripts/non-crema/)
-( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/prebuilt-feature/ package -am -DskipTests )
+# use Maven to prepare the launcher JAR (-pl paths resolve against the cwd, so run
+# from the repo root — this script itself lives in build-scripts/non-crema/); -am also builds
+# prebuilt-feature, which the launcher depends on
+( cd "$ROOT_DIR" && "$MAVEN_HOME/bin/mvn" -q -pl native/launcher/ package -am -DskipTests )
 # copy the prebuilt-feature JAR produced by Maven build
 SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
 cp "$ROOT_DIR"/native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
+
+# copy launcher JAR produced by Maven build
+LAUNCHER_JAR="$NMVN_WORK_DIR/nmvn-launcher.jar"
+cp "$ROOT_DIR"/native/launcher/target/launcher-4.1.0*.jar "$LAUNCHER_JAR"
+cp_append "$LAUNCHER_JAR"
 
 # ---------------------------------------------------------------------------------------------------
 # 3) Sanitize realm jars: strip EnclosingMethod/Signature attributes whose reflective parsing
@@ -698,6 +704,13 @@ NATIVE_IMAGE_ARGS=(
   -classpath "$CLASSPATH"
   ${PREBUILT_ARGS[@]+"${PREBUILT_ARGS[@]}"}
   -Dguice_bytecode_gen_option=DISABLED
+  # Optimize for size. Measured on this catalog (2026-08-10, A/B otherwise identical builds):
+  #   image size:      171.3 MiB with -Os vs 195.4 MiB without  (-24.1 MiB, -12%)
+  #   code area:       42.0 MiB vs 62.9 MiB                     (-33%)
+  #   example build:   ~1.32 s vs ~1.16 s clean package         (+14% wall time)
+  #   startup:         65 ms vs 62 ms --version                 (no difference)
+  # Drop this line first if users' build time matters more than image size.
+  # -Os
   --no-fallback
   -H:+UnlockExperimentalVMOptions
   # SVM by default parses and CONSUMES -D/-XX/-Xm* arguments at VM startup, stripping them from
@@ -706,33 +719,82 @@ NATIVE_IMAGE_ARGS=(
   # Maven's CLI parsing; NmvnLauncher mirrors -D args into system properties (the part of SVM's
   # behavior launchers actually relied on — maven.home is required as a system property).
   -H:-ParseRuntimeOptions
+  # THE flag that makes baked realms work without Crema, and the one thing dropping
+  # -H:+RuntimeClassLoading silently takes away with it.
+  #
+  # RuntimeClassLoading's onValueUpdate forces +ClassForNameRespectsClassLoader (see
+  # RuntimeClassLoading.Options in SVM), and that option DEFAULTS TO FALSE. With it false,
+  # SVM resolves Class.forName AND getResource(s) through ONE GLOBAL NAMESPACE, ignoring the
+  # class loader argument entirely: ClassRegistries.getRegistry returns the shared bootRegistry
+  # for every loader. The whole prebuilt design is per-realm class identity, so a flat namespace
+  # makes any name present in more than one realm resolve to an arbitrary winner. Observed with
+  # this exact catalog: maven-war-plugin's realm carries maven-resolver-named-locks 1.9.24 next
+  # to core's 2.0.18, core's sisu index scan then sees the REALM's META-INF/sisu/javax.inject.Named
+  # and binds the realm's FileLockNamedLockFactory into plexus.core, which dies with
+  # "FileLockNamedLockFactory cannot be cast to NamedLockFactory". Which failure you get depends
+  # on which plugins are baked (with all ten it instead surfaced as a null Injector inside sisu's
+  # AbstractDeferredClass, from the same flat-namespace collision on org.eclipse.sisu classes:
+  # war ships sisu 0.9.0.M4 and site 0.9.0.M3 alongside core's 1.0.1).
+  #
+  # Not needed under crema only because RuntimeClassLoading turns it on implicitly. The other two
+  # implications of that flag are NOT carried over: -ClosedTypeWorld and -SupportPredefinedClasses
+  # exist to support DEFINING classes at run time, which this variant deliberately cannot do.
+  -H:+ClassForNameRespectsClassLoader
   -H:+ReportExceptionStackTraces
   -H:+AllowJRTFileSystem
   -H:EnableURLProtocols=jar
   -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
   -H:IncludeResources='org/apache/maven/plugins/clean/.*'
-  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-min")"
-  -H:Preserve=module=java.base
-  -H:Preserve=module=java.logging
-  -H:Preserve=module=java.xml
-  -H:Preserve=module=java.desktop
-  -H:Preserve=module=java.compiler
-  -H:Preserve=module=jdk.compiler
-  -H:Preserve=package=org.apache.maven.*
-  -H:Preserve=package=com.ctc.wstx.*
-  -H:Preserve=package=org.apache.commons.logging.impl.*
-  -H:Preserve=package=org.eclipse.aether.*
-  -H:Preserve=package=org.slf4j.*
-  -H:Preserve=package=org.codehaus.plexus.*
-  -H:Preserve=package=nmvn.*
-  -H:Preserve=package=com.google.inject.*
-  -H:Preserve=package=com.google.common.*
-  -H:Preserve=package=org.eclipse.sisu.*
-  -H:Preserve=package=org.sonatype.*
-  -H:Preserve=package=org.fusesource.*
-  -H:Preserve=package=org.jline.*
-  -H:Preserve=package=javax.inject.*
-  -H:Preserve=module=jdk.unsupported
+  # Variant-specific metadata set (reflection-crema/ is the crema script's counterpart). Beyond
+  # the shared jline FFM downcalls, this registers the JDK dynamic proxies guice creates to break
+  # circular dependencies in maven-core (e.g. MavenPluginManager). Crema defines proxy classes at
+  # run time; without it they must be known at build time, or the first plugin execution dies
+  # with MissingReflectionRegistrationError. Captured via the native-image agent on the examples.
+  #
+  # This directory ALSO carries predefined-classes-config.json + agent-extracted-predefined-classes/.
+  # Sisu CLONES a component implementation whenever one class is registered under more than one
+  # role-hint in a legacy META-INF/plexus/components.xml: PlexusTypeRegistry asks CloningClassSpace
+  # for "<impl>$__sisuN", whose CloningClassLoader GENERATES that class with ASM and defineClass()es
+  # it at run time. Crema allows that; here it aborts with "Classes cannot be defined at runtime".
+  # The whole Maven distribution needs exactly TWO of these — wagon-http declares HttpWagon under
+  # both 'http' and 'https', and maven-compat does the same for DefaultArtifactHandler — so their
+  # bytes are shipped as SVM predefined classes instead (SupportPredefinedClasses is on by default
+  # in this variant; RuntimeClassLoading would have switched it off as redundant).
+  #
+  # Re-capture, should sisu/wagon/ASM ever change the generated bytes (the lookup is by hash):
+  #   MAVEN_OPTS="-agentlib:native-image-agent=config-output-dir=/tmp/cfg,experimental-class-define-support" \
+  #     apache-maven/target/apache-maven-*/bin/mvn -B clean package -DskipTests
+  # then keep ONLY the '$__sisu' entries: the agent also records every plugin class the JVM loaded
+  # from a plugin realm (~4900 of them), which this image bakes into realms and must not predefine.
+  -H:ConfigurationFileDirectories="$(to_cp_path "$ROOT_DIR/reflection-non-crema")"
+  # JDK module preserves trimmed for image size (2026-08-10). -H:Preserve registers EVERY class
+  # of the selection for reflection AND JNI — the full set stood at 96,794 reflected types /
+  # 234k methods, with ~23MiB of JNIAccessibleMethod objects and MiBs of sun.awt.X11/javax.swing
+  # code in a build tool that never opens a window. Dropped: java.base, java.logging, java.xml,
+  # java.desktop, jdk.unsupported, and (second pass) java.compiler + jdk.compiler — their
+  # classes stay available through normal reachability, only the blanket keep-everything
+  # registration is gone. In-process javac survives on reachability alone: JavacTool is an
+  # --initialize-at-build-time root and plain compilation instantiates its internals directly
+  # (verified by the example suite compiling real sources). External annotation processors
+  # (lombok & co) load PROJECT classes at run time — impossible in this variant regardless of
+  # preserves. The compiler preserves were what still registered ~7.8k types for JNI access.
+  # Package preserves replaced by PRECISE metadata (2026-08-10). The blanket package= preserves
+  # (org.apache.maven.*, com.google.common.*, org.eclipse.aether.*, plexus, sisu, guice, jline,
+  # ...) registered ~45k types for reflection AND JNI to cover core's Guice/sisu DI — the image
+  # paid for it in code metadata, string data and JNIAccessibleMethod heap objects. Replaced by
+  # reflection-non-crema/reachability-metadata.json: ~1.2k entries captured with the
+  # native-image agent on a real JVM Maven build (clean package of a Boot example), merged with
+  # the hand-written proxy + jline FFM entries, with all captured JDK types hardened to
+  # allDeclaredConstructors/allPublicMethods/allDeclaredFields (plexus config converters look up
+  # members like Long.parseLong by reflection on paths the agent run did not take).
+  #
+  # COVERAGE CAVEAT: agent metadata covers what the capture workload exercised. A core path no
+  # example touches (deploy goal wiring, exotic mojo parameter types, error paths) can throw
+  # MissingReflectionRegistrationError at run time. Re-capture (append, don't replace):
+  #   MAVEN_OPTS="-agentlib:native-image-agent=config-merge-dir=reflection-non-crema" \
+  #     apache-maven/target/apache-maven-*/bin/mvn -B <goals>   # on a representative project
+  # Realm (plugin) classes need no entries here — PrebuiltReflectionFeature registers them from
+  # the build-time realms; JSON could not resolve those names anyway.
   --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
   --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
   --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
@@ -754,7 +816,7 @@ NATIVE_IMAGE_ARGS=(
   # does on HotSpot Windows today.
   --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm,jdk.internal.jrtfs.SystemImage
   --features=nmvn.PrebuiltReflectionFeature
-  nmvn.NmvnLauncher
+  nmvn.launcher.NmvnLauncher
   "$(to_cp_path "$NMVN_OUT_DIR/nmvn-native")"
 )
 
