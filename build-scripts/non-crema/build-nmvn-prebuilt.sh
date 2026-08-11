@@ -38,7 +38,8 @@ TARGET_DIR="$ROOT_DIR/apache-maven/target"
 #   build/           — image binary + .plugins
 #   build/work/      — scratch (realms, javac, sidecar, sanitize)
 # Maven dist stays in apache-maven/target/ (not under build/).
-# Optional overrides: NMVN_OUT_DIR, NMVN_WORK_DIR, NMVN_MAVEN_HOME
+# Optional overrides: NMVN_OUT_DIR, NMVN_WORK_DIR, NMVN_MAVEN_HOME,
+#                     NMVN_PGO=instrument|<iprof[,iprof...]> (Oracle GraalVM only — see step 4)
 NMVN_OUT_DIR="${NMVN_OUT_DIR:-$ROOT_DIR/build}"
 NMVN_WORK_DIR="${NMVN_WORK_DIR:-$ROOT_DIR/build/work}"
 mkdir -p "$NMVN_OUT_DIR" "$NMVN_WORK_DIR"
@@ -699,10 +700,50 @@ if [ "${#PLUGINS[@]}" -gt 0 ]; then
   )
 fi
 
+# Profile-guided optimization — needs Oracle GraalVM (GraalVM CE has no --pgo/--pgo-instrument;
+# CE's driver treats the unknown flag as the main-class name and dies with a misleading
+# "'--pgo-instrument' is not a valid mainclass", hence the version warning below).
+#   NMVN_PGO=instrument                 build an INSTRUMENTED image: every run dumps default.iprof
+#                                       into ITS OWN CWD on exit (no runtime flag needed — good,
+#                                       because -H:-ParseRuntimeOptions above means the image would
+#                                       pass -XX:ProfilesDumpFile through to Maven's argv anyway)
+#   NMVN_PGO=/path/a.iprof[,b.iprof..]  build the OPTIMIZED image from collected profiles
+# Workflow: instrument → run representative builds with the instrumented binary (one directory per
+# run, or collect default.iprof between runs — each run overwrites it) → rebuild with the profiles.
+PGO_ARGS=()
+if [ -n "${NMVN_PGO:-}" ]; then
+  if ! run_native_image --version 2>/dev/null | grep -q 'Oracle GraalVM'; then
+    echo ">>> WARNING: NMVN_PGO is set but this native-image does not identify as Oracle GraalVM —"
+    echo ">>>          PGO is not part of GraalVM CE; expect the build to fail. Continuing anyway."
+  fi
+  if [ "$NMVN_PGO" = "instrument" ]; then
+    PGO_ARGS=(--pgo-instrument)
+    echo ">>> PGO: building INSTRUMENTED image (runs dump default.iprof into their cwd on exit)"
+  else
+    PGO_LIST=""
+    IFS=',' read -r -a PGO_FILES <<< "$NMVN_PGO"
+    for f in "${PGO_FILES[@]}"; do
+      [ -z "$f" ] && continue
+      if [ ! -f "$f" ]; then
+        echo "Error: NMVN_PGO profile not found: $f"
+        exit 1
+      fi
+      PGO_LIST="${PGO_LIST:+$PGO_LIST,}$(to_cp_path "$f")"
+    done
+    if [ -z "$PGO_LIST" ]; then
+      echo "Error: NMVN_PGO='$NMVN_PGO' resolved to no profile files"
+      exit 1
+    fi
+    PGO_ARGS=(--pgo="$PGO_LIST")
+    echo ">>> PGO: building OPTIMIZED image from profiles: $PGO_LIST"
+  fi
+fi
+
 NATIVE_IMAGE_ARGS=(
   -J-XX:MaxRAMPercentage="$NMVN_MAX_RAM_PERCENTAGE"
   -classpath "$CLASSPATH"
   ${PREBUILT_ARGS[@]+"${PREBUILT_ARGS[@]}"}
+  ${PGO_ARGS[@]+"${PGO_ARGS[@]}"}
   -Dguice_bytecode_gen_option=DISABLED
   # Optimize for size. Measured on this catalog (2026-08-10, A/B otherwise identical builds):
   #   image size:      171.3 MiB with -Os vs 195.4 MiB without  (-24.1 MiB, -12%)
