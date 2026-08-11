@@ -57,7 +57,10 @@ public final class PrebuiltReflectionFeature implements Feature {
 
     /** Sidecar components discovered by name via the sisu index — need full reflection. */
     private static final Class<?>[] SIDECAR_COMPONENTS = {
-        PrebuiltPluginDescriptorCache.class, PrebuiltPluginRealmCache.class, PrebuiltPluginConfigurationModule.class
+        PrebuiltPluginDescriptorCache.class,
+        PrebuiltPluginRealmCache.class,
+        PrebuiltPluginConfigurationModule.class,
+        JvmFallbackBuildPluginManager.class
     };
 
     private static final String[] CLASSPATH_INDEXES = {

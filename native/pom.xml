@@ -34,6 +34,16 @@
           <skip>true</skip>
         </configuration>
       </plugin>
+      <!-- The bytecode-version rule bans jvm-channel (compiled for the GraalVM JDK these native
+           modules require anyway); these modules are not part of the Maven dist, so the dist
+           compatibility rules don't apply to them. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>

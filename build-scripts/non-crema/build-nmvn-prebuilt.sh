@@ -596,6 +596,19 @@ SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
 cp "$ROOT_DIR"/native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
+# jvm-channel (in-process HotSpot JVM for non-baked plugins — JVM fallback). Sidecar dependency,
+# resolved from the local repo where `mvn install -pl jvm-channel -am` of the graalvm-native-libs
+# checkout put it. Its META-INF/native-image/native-image.properties self-registers the
+# ChannelFeature, so being on the image classpath is all the wiring it needs.
+JVM_CHANNEL_JAR="${NMVN_JVM_CHANNEL_JAR:-$HOME/.m2/repository/org/apidesign/graalvm/jvm-channel/2.0-SNAPSHOT/jvm-channel-2.0-SNAPSHOT.jar}"
+if [ ! -f "$JVM_CHANNEL_JAR" ]; then
+  echo "Error: jvm-channel jar not found at $JVM_CHANNEL_JAR"
+  echo "Build it first:  (cd /path/to/graalvm-native-libs && mvn install -DskipTests -pl jvm-channel -am)"
+  echo "or point NMVN_JVM_CHANNEL_JAR at the jar."
+  exit 1
+fi
+cp_append "$JVM_CHANNEL_JAR"
+
 # copy launcher JAR produced by Maven build
 LAUNCHER_JAR="$NMVN_WORK_DIR/nmvn-launcher.jar"
 cp "$ROOT_DIR"/native/launcher/target/launcher-4.1.0*.jar "$LAUNCHER_JAR"
@@ -745,6 +758,10 @@ NATIVE_IMAGE_ARGS=(
   -H:EnableURLProtocols=jar
   -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
   -H:IncludeResources='org/apache/maven/plugins/clean/.*'
+  # HotSpot-side wrapper main of the JVM fallback: its BYTECODE is baked as a resource and
+  # extracted to a temp dir at run time to go on the in-process HotSpot JVM's classpath
+  # (see HotspotMavenRunner.extractWrapper).
+  -H:IncludeResources='nmvn/hotspot/.*'
   # Variant-specific metadata set (reflection-crema/ is the crema script's counterpart). Beyond
   # the shared jline FFM downcalls, this registers the JDK dynamic proxies guice creates to break
   # circular dependencies in maven-core (e.g. MavenPluginManager). Crema defines proxy classes at
