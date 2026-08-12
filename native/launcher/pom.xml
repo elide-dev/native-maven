@@ -163,4 +163,127 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <!-- Native image build via native-build-tools (step 2 of the migration away from
+         build-scripts/). Static image flags live in the sidecar jar's META-INF
+         native-image.properties; everything DYNAMIC (dist-exact classpath, realm spec, builder
+         heap, metadata dir) is produced by GenerateRealmSpec into an @argfile that buildArgs
+         references — the pom stays static.
+
+         Usage (dist must be built first — the image classpath is the dist's boot/ + lib/):
+           mvn -Pnative package -pl native/launcher -am -DskipTests \
+             -Dnmvn.plugins="g:a:v,g:a:v,..."          (or -Dnmvn.pluginsFile=path; entries with
+                                                        per-plugin |deps keys: whitespace-separated)
+         Output: target/${nmvn.imageName}. No plugins → baseline image (JVM fallback serves goals).
+         Not yet covered vs the script: the crema variant, PGO, -Os. -->
+    <profile>
+      <id>native</id>
+      <properties>
+        <nmvn.plugins />
+        <nmvn.pluginsFile />
+        <nmvn.imageName>nmvn-native</nmvn.imageName>
+        <nmvn.maxRamPercentage>80.0</nmvn.maxRamPercentage>
+        <nmvn.mavenHome>${maven.multiModuleProjectDirectory}/apache-maven/target/apache-maven-${project.version}</nmvn.mavenHome>
+        <nmvn.configDir>${maven.multiModuleProjectDirectory}/reflection-non-crema</nmvn.configDir>
+      </properties>
+      <dependencies>
+        <!-- prep tool (GenerateRealmSpec + SanitizeRealmJars); test scope: build-time only,
+             must never leak onto the image classpath -->
+        <dependency>
+          <groupId>org.apache.maven</groupId>
+          <artifactId>sanitize</artifactId>
+          <version>4.1.0-SNAPSHOT</version>
+          <scope>test</scope>
+        </dependency>
+      </dependencies>
+      <build>
+        <plugins>
+          <!-- exposes ${org.apache.maven:sanitize:jar}, ${org.apache.maven:prebuilt-feature:jar},
+               ${org.apidesign.graalvm:jvm-channel:jar} for the exec arguments below -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>artifact-path-properties</id>
+                <goals>
+                  <goal>properties</goal>
+                </goals>
+                <phase>initialize</phase>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>generate-realm-spec</id>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <phase>prepare-package</phase>
+                <!-- combine.self: do NOT inherit the run-the-launcher commandlineArgs above -->
+                <configuration combine.self="override">
+                  <executable>${java.home}/bin/java</executable>
+                  <arguments>
+                    <argument>-cp</argument>
+                    <argument>${org.apache.maven:sanitize:jar}</argument>
+                    <argument>org.apache.maven.sanitize.GenerateRealmSpec</argument>
+                    <argument>--maven-home</argument>
+                    <argument>${nmvn.mavenHome}</argument>
+                    <argument>--work</argument>
+                    <argument>${project.build.directory}/nmvn</argument>
+                    <argument>--argfile</argument>
+                    <argument>${project.build.directory}/nmvn/native-image.args</argument>
+                    <argument>--config-dir</argument>
+                    <argument>${nmvn.configDir}</argument>
+                    <argument>--extra-cp</argument>
+                    <argument>${org.apache.maven:prebuilt-feature:jar}</argument>
+                    <argument>--extra-cp</argument>
+                    <argument>${org.apidesign.graalvm:jvm-channel:jar}</argument>
+                    <argument>--plugins</argument>
+                    <argument>${nmvn.plugins}</argument>
+                    <argument>--plugins-file</argument>
+                    <argument>${nmvn.pluginsFile}</argument>
+                    <argument>--max-ram-percentage</argument>
+                    <argument>${nmvn.maxRamPercentage}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <version>1.1.8</version>
+            <configuration>
+              <imageName>${nmvn.imageName}</imageName>
+              <mainClass>nmvn.launcher.NmvnLauncher</mainClass>
+              <!-- ONLY the launcher classes; the dist-exact rest (boot/ + lib/ + sidecar +
+                   jvm-channel) rides in the argfile's -cp — the driver merges both. This
+                   deliberately bypasses NBT's module-dependency classpath: the dist is the
+                   curated ground truth of what runtime Maven ships, and resolving the module
+                   graph instead risks silent skew. -->
+              <classpath>
+                <param>${project.build.outputDirectory}</param>
+              </classpath>
+              <buildArgs>
+                <buildArg>@${project.build.directory}/nmvn/native-image.args</buildArg>
+              </buildArgs>
+            </configuration>
+            <executions>
+              <execution>
+                <id>build-native</id>
+                <goals>
+                  <goal>compile-no-fork</goal>
+                </goals>
+                <phase>package</phase>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
