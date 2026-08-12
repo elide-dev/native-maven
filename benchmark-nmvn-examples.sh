@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Benchmark classic Maven vs native nmvn on every project under
-# examples/spring/<version>/ (an unsupported/ subdirectory is skipped — those
-# projects are not benchmarked).
+# examples/spring/<version>/. Projects whose .nmvn-unsupported-variants marker
+# file lists the variant under test — or 'all' — are skipped, not benchmarked.
 #
 # Default command:
 #   clean package -DskipTests=true
@@ -19,6 +19,9 @@
 #   --nmvn-binary PATH  native binary to benchmark, absolute or relative to the repo
 #                       root; also settable via NMVN_BINARY (required, no default;
 #                       the build scripts write to build/, e.g. build/nmvn-spring-4.1.0)
+#   --variant NAME      nmvn variant under test: crema or non-crema (default: crema;
+#                       also settable via NMVN_VARIANT) — projects whose
+#                       .nmvn-unsupported-variants marker lists it are skipped
 #   --mvn CMD           classic Maven command (default: mvn on PATH, or MVN env)
 #   --goals "..."       Maven goals/args (default: clean package -DskipTests=true)
 #   --only NAME[,...]   only these example directory names
@@ -37,6 +40,7 @@ RUNS=3
 WARMUP=1
 SPRING="${SPRING_VERSION:-}"
 NMVN_BINARY_NAME="${NMVN_BINARY:-}"
+VARIANT="${NMVN_VARIANT:-crema}"
 MVN_CMD="${MVN:-mvn}"
 GOALS=(clean package -DskipTests=true)
 ONLY=""
@@ -44,7 +48,7 @@ CSV=""
 KEEP_GOING=0
 
 usage() {
-  sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -53,6 +57,7 @@ while [ $# -gt 0 ]; do
     --runs) RUNS="${2:?}"; shift 2 ;;
     --warmup) WARMUP="${2:?}"; shift 2 ;;
     --nmvn-binary) NMVN_BINARY_NAME="${2:?}"; shift 2 ;;
+    --variant) VARIANT="${2:?}"; shift 2 ;;
     --mvn) MVN_CMD="${2:?}"; shift 2 ;;
     --goals) # shellcheck disable=SC2206
       GOALS=($2); shift 2 ;;
@@ -63,6 +68,14 @@ while [ $# -gt 0 ]; do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+case "$VARIANT" in
+  crema|non-crema) ;;
+  *)
+    echo "Error: unknown variant: $VARIANT (expected crema or non-crema)" >&2
+    exit 2
+    ;;
+esac
 
 if [ -z "$SPRING" ]; then
   echo "Error: no Spring version specified — set SPRING_VERSION or pass --spring VERSION" >&2
@@ -117,12 +130,19 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # Discover projects (directories under examples/spring/$SPRING_DIR/ that contain pom.xml).
-# unsupported/ is skipped explicitly — don't rely on it never growing a pom.xml.
 PROJECTS=()
+SKIPPED=()
 for d in "$EXAMPLES_DIR"/*/; do
   [ -f "${d}pom.xml" ] || continue
   name="$(basename "$d")"
-  [ "$name" = "unsupported" ] && continue
+  # Variant opt-out: a project that cannot work on some variant carries a
+  # .nmvn-unsupported-variants file listing those variants — or 'all' — one per
+  # line, '#' comments. Applies even under --only: the project cannot pass here.
+  if [ -f "${d}.nmvn-unsupported-variants" ] \
+     && sed -e 's/#.*//' -e 's/[[:space:]]//g' "${d}.nmvn-unsupported-variants" | grep -qx -e "$VARIANT" -e all; then
+    SKIPPED+=("$name")
+    continue
+  fi
   if [ -n "$ONLY" ]; then
     case ",$ONLY," in
       *",$name,"*) ;;
@@ -133,13 +153,20 @@ for d in "$EXAMPLES_DIR"/*/; do
 done
 
 if [ ${#PROJECTS[@]} -eq 0 ]; then
-  echo "Error: no example projects found under $EXAMPLES_DIR" >&2
+  if [ ${#SKIPPED[@]} -gt 0 ]; then
+    echo "Error: no example projects to run under $EXAMPLES_DIR (unsupported on $VARIANT: ${SKIPPED[*]})" >&2
+  else
+    echo "Error: no example projects found under $EXAMPLES_DIR" >&2
+  fi
   exit 1
 fi
 
-echo ">>> Benchmark: classic Maven vs native nmvn"
+echo ">>> Benchmark: classic Maven vs native nmvn ($VARIANT)"
 echo ">>> Spring:    $SPRING_FULL (examples/spring/$SPRING_DIR)"
 echo ">>> Projects:  ${PROJECTS[*]}"
+if [ ${#SKIPPED[@]} -gt 0 ]; then
+  echo ">>> Skipped:   ${SKIPPED[*]} (unsupported on $VARIANT)"
+fi
 echo ">>> Goals:     ${GOALS[*]}"
 echo ">>> Runs:      $RUNS timed (+ $WARMUP warmup) per engine"
 echo ">>> Classic:   $MVN_CMD"

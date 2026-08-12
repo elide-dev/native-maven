@@ -1,11 +1,13 @@
-# Build the crema nmvn image per Spring Boot version and smoke-test it: every example project
-# under examples/spring/<version>/ must build with the freshly built binary
-# (./test-nmvn-examples.sh, goals: clean package -DskipTests=true).
+# Build the nmvn image per Spring Boot version and variant (crema/non-crema) and smoke-test
+# it: every supported example project under examples/spring/<version>/ must build with the
+# freshly built binary (./test-nmvn-examples.sh, goals: clean package -DskipTests=true).
+# Projects a variant cannot support carry a .nmvn-unsupported-variants marker and are skipped
+# by the smoke test for that variant.
 #
 # Scope (deliberately smaller than release-spring-nmvn.yml, which this mirrors step-for-step):
-#   - crema variant only (NMVN_VARIANT default) — extend the matrix when non-crema matters
-#   - linux-x86_64 only — image builds are expensive; the release workflow covers all platforms
-#   - one matrix job per Boot version so the two image builds run in parallel
+#   - same platform matrix as the release workflow, crossed with the Boot versions and
+#     variants (crema/non-crema) — one image build per platform x Boot version x variant
+#     job, all in parallel
 #
 # Known flake: the native-image builder can die with "NativeImageForkJoinWorkerThread not
 # available in this platform" — a GraalVM builder race, not caused by any change under test.
@@ -28,7 +30,6 @@ permissions: {}
 env:
   # https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4
   GRAAL_TAG: graal-25.2.4
-  GRAAL_FILE: graalvm-community-jdk-25i2-25.0.4_linux-x64_bin.tar.gz
 
 jobs:
   build-and-test:
@@ -36,8 +37,28 @@ jobs:
       fail-fast: false
       matrix:
         boot: ["4.1.0", "4.0.7"]
+        variant: ["crema", "non-crema"]
+        os:
+          - ubuntu-latest-16-cores
+          - ubuntu-latest-32-cores-arm64
+          - macos-arm64-cipool
+          - windows-latest-16-cores
+        # Attach platform/graal_file to each os (merged into every boot x os x variant combination).
+        include:
+          - os: ubuntu-latest-16-cores
+            platform: linux-x86_64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_linux-x64_bin.tar.gz
+          - os: ubuntu-latest-32-cores-arm64
+            platform: linux-aarch64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_linux-aarch64_bin.tar.gz
+          - os: macos-arm64-cipool
+            platform: macos-aarch64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_macos-aarch64_bin.tar.gz
+          - os: windows-latest-16-cores
+            platform: windows-x86_64
+            graal_file: graalvm-community-jdk-25i2-25.0.4_windows-x64_bin.zip
 
-    runs-on: ubuntu-latest-16-cores
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
@@ -51,27 +72,53 @@ jobs:
       - name: Download and install GraalVM 25.2
         run: |
           set -euo pipefail
-          GRAAL_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${GRAAL_TAG}/${GRAAL_FILE}"
+          GRAAL_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${GRAAL_TAG}/${{ matrix.graal_file }}"
           INSTALL_ROOT="${RUNNER_TEMP:-/tmp}/graalvm-25.2"
-          ARCHIVE="${RUNNER_TEMP:-/tmp}/${GRAAL_FILE}"
+          ARCHIVE="${RUNNER_TEMP:-/tmp}/${{ matrix.graal_file }}"
 
           echo ">>> Downloading ${GRAAL_URL}"
           rm -rf "${INSTALL_ROOT}"
           mkdir -p "${INSTALL_ROOT}"
           curl -fsSL "${GRAAL_URL}" -o "${ARCHIVE}"
-          tar -xzf "${ARCHIVE}" -C "${INSTALL_ROOT}"
 
+          case "${{ matrix.graal_file }}" in
+            *.zip)
+              if command -v unzip >/dev/null 2>&1; then
+                unzip -q "${ARCHIVE}" -d "${INSTALL_ROOT}"
+              else
+                pwsh -NoProfile -Command "Expand-Archive -Path '${ARCHIVE}' -DestinationPath '${INSTALL_ROOT}' -Force"
+              fi
+              ;;
+            *)
+              tar -xzf "${ARCHIVE}" -C "${INSTALL_ROOT}"
+              ;;
+          esac
+
+          # Locate JAVA_HOME (macOS: Contents/Home; Linux/Windows: unpacked root).
           JAVA_HOME_CANDIDATE=""
-          for d in "${INSTALL_ROOT}"/*; do
-            if [ -d "$d" ] && [ -f "${d}/bin/native-image" ]; then
+          for d in "${INSTALL_ROOT}"/*/Contents/Home "${INSTALL_ROOT}"/*/*/Contents/Home; do
+            if [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ] || [ -f "${d}/bin/native-image.exe" ]; then
               JAVA_HOME_CANDIDATE="$d"
               break
             fi
           done
           if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
+            for d in "${INSTALL_ROOT}"/*; do
+              if [ -d "$d" ] && { [ -f "${d}/bin/native-image" ] || [ -f "${d}/bin/native-image.cmd" ] || [ -f "${d}/bin/native-image.exe" ]; }; then
+                JAVA_HOME_CANDIDATE="$d"
+                break
+              fi
+            done
+          fi
+          if [ -z "${JAVA_HOME_CANDIDATE}" ]; then
             echo "::error::Could not find native-image under ${INSTALL_ROOT}"
-            find "${INSTALL_ROOT}" -maxdepth 5 -type f -name 'native-image' 2>/dev/null | head -20 || true
+            find "${INSTALL_ROOT}" -maxdepth 5 -type f \( -name 'native-image' -o -name 'native-image.cmd' -o -name 'native-image.exe' \) 2>/dev/null | head -20 || true
             exit 1
+          fi
+
+          # Git Bash on Windows: store Unix-style JAVA_HOME for later bash steps.
+          if command -v cygpath >/dev/null 2>&1; then
+            JAVA_HOME_CANDIDATE="$(cygpath -u "${JAVA_HOME_CANDIDATE}")"
           fi
 
           # Subsequent steps inherit these (GITHUB_ENV / GITHUB_PATH).
@@ -84,33 +131,49 @@ jobs:
 
       - name: Build Maven distribution
         run: |
+          # Git Bash on Windows: hand Maven a Windows-style path (C:/...), not /c/....
+          REPO_ROOT="$PWD"
+          if command -v cygpath >/dev/null 2>&1; then
+            REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+          fi
           chmod +x ./mvnw
-          ./mvnw clean install -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true -DdistributionTargetDir="$PWD/apache-maven/target/apache-maven-4.1.0-SNAPSHOT"
+          ./mvnw clean install -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true -DdistributionTargetDir="$REPO_ROOT/apache-maven/target/apache-maven-4.1.0-SNAPSHOT"
 
       - name: Run Native Maven Distribution in JVM mode
         run: |
+          REPO_ROOT="$PWD"
+          if command -v cygpath >/dev/null 2>&1; then
+            REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+          fi
           chmod +x ./mvnw
-          ./mvnw -f native/launcher exec:exec -Dexec.appArgs="-f $PWD/examples/java-maven-sample-project/ clean package"
+          ./mvnw -f native/launcher exec:exec -Dexec.appArgs="-f $REPO_ROOT/examples/java-maven-sample-project/ clean package"
 
-      - name: Build crema image for Boot ${{ matrix.boot }}
+      - name: Build ${{ matrix.variant }} image for Boot ${{ matrix.boot }}
         run: |
           set -euo pipefail
           chmod +x catalog/resolve_boot_catalog.py build-scripts/build-nmvn-catalog.sh \
-            build-scripts/crema/build-nmvn-prebuilt.sh
+            "build-scripts/${{ matrix.variant }}/build-nmvn-prebuilt.sh"
 
           rm -rf build
           ./catalog/resolve_boot_catalog.py \
             --boot-version "${{ matrix.boot }}" \
             --language java
 
-          ./build-scripts/build-nmvn-catalog.sh "build/catalogs/nmvn-spring-${{ matrix.boot }}.json"
+          NMVN_VARIANT="${{ matrix.variant }}" \
+            ./build-scripts/build-nmvn-catalog.sh "build/catalogs/nmvn-spring-${{ matrix.boot }}.json"
 
           BIN="build/nmvn-spring-${{ matrix.boot }}"
+          if [ -f "${BIN}.exe" ]; then
+            BIN="${BIN}.exe"
+          fi
           if [ ! -f "${BIN}" ]; then
             echo "::error::Expected binary ${BIN} after build for Boot ${{ matrix.boot }}"
             ls -la build/ || true
             exit 1
           fi
+
+          # Hand the resolved name (with .exe on Windows) to the smoke-test step.
+          echo "NMVN_BIN=${BIN}" >> "$GITHUB_ENV"
 
       - name: Smoke-test examples/spring against the image
         run: |
@@ -118,7 +181,8 @@ jobs:
           chmod +x test-nmvn-examples.sh
           ./test-nmvn-examples.sh \
             --spring "${{ matrix.boot }}" \
-            --nmvn-binary "build/nmvn-spring-${{ matrix.boot }}" \
+            --nmvn-binary "${NMVN_BIN}" \
+            --variant "${{ matrix.variant }}" \
             --keep-going
 
       - name: Clean workspace outputs

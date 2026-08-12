@@ -1,0 +1,4 @@
+# nmvn variants this example cannot build on, one per line ('#' starts a comment).
+# 'all' means every variant. test-nmvn-examples.sh and benchmark-nmvn-examples.sh
+# skip this project when run with a listed --variant.
+all

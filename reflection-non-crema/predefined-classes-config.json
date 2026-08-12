@@ -1,0 +1,15 @@
+[
+  {
+    "type": "agent-extracted",
+    "classes": [
+      {
+        "nameInfo": "org/apache/maven/wagon/providers/http/HttpWagon$__sisu1",
+        "hash": "RfNzZbCxU23hSsLKnGv8t2"
+      },
+      {
+        "nameInfo": "org/apache/maven/artifact/handler/DefaultArtifactHandler$__sisu1",
+        "hash": "ZftMh10YuGIKLlq2ds2jWD"
+      }
+    ]
+  }
+]
