@@ -50,7 +50,13 @@ NmvnLauncher already established.
 
 - Active only at image runtime (`org.graalvm.nativeimage.imagecode=runtime`);
   completely inert on plain-JVM runs and in tests.
-- `-Dnmvn.jvm.fallback=false` disables it (restores the old hard-fail).
+- The default is **baked per variant** (`PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT`,
+  captured from the image builder's `-Dnmvn.jvm.fallback.default`): **on** for
+  non-crema, **off** for crema — the sidecar (and with it the fallback's sisu
+  component) is on both variants' classpaths, and under crema delegating to
+  HotSpot would bypass the runtime class loading that variant exists to exercise.
+- `-Dnmvn.jvm.fallback=true|false` at run time overrides the baked default
+  either way.
 
 ## Supporting changes
 
@@ -71,8 +77,11 @@ NmvnLauncher already established.
 - `build-scripts/non-crema/build-nmvn-prebuilt.sh` — appends the jvm-channel
   jar (from the local repo, where the sidecar Maven build resolves it; version
   via `NMVN_JVM_CHANNEL_VERSION`, exact jar via `NMVN_JVM_CHANNEL_JAR`; its
-  bundled `native-image.properties` self-registers everything else) and adds
-  `-H:IncludeResources='nmvn/hotspot/.*'` for the wrapper bytecode.
+  bundled `native-image.properties` self-registers everything else). The
+  `-H:IncludeResources=nmvn/hotspot/.*` pattern for the wrapper bytecode lives
+  in the sidecar's own
+  `META-INF/native-image/org.apache.maven/nmvn-sidecar/native-image.properties`
+  together with the other static image flags.
 
 ## How to test
 

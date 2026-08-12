@@ -72,10 +72,16 @@ final class HotspotMavenRunner {
 
     private HotspotMavenRunner() {}
 
-    /** Is the JVM fallback active? Only inside a native image, and {@code -Dnmvn.jvm.fallback=false} disables it. */
+    /**
+     * Is the JVM fallback active? Only inside a native image; the default is baked per variant
+     * ({@link PrebuiltPluginRealms#JVM_FALLBACK_DEFAULT} — true for non-crema, false for crema,
+     * whose runtime class loading serves non-baked plugins natively); {@code -Dnmvn.jvm.fallback}
+     * overrides at run time.
+     */
     static boolean enabled() {
         return "runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode"))
-                && Boolean.parseBoolean(System.getProperty("nmvn.jvm.fallback", "true"));
+                && Boolean.parseBoolean(System.getProperty(
+                        "nmvn.jvm.fallback", String.valueOf(PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT)));
     }
 
     /**
