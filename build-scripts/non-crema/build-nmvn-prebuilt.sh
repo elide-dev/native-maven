@@ -597,14 +597,16 @@ cp "$ROOT_DIR"/native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDE
 cp_append "$SIDECAR_JAR"
 
 # jvm-channel (in-process HotSpot JVM for non-baked plugins — JVM fallback). Sidecar dependency,
-# resolved from the local repo where `mvn install -pl jvm-channel -am` of the graalvm-native-libs
-# checkout put it. Its META-INF/native-image/native-image.properties self-registers the
-# ChannelFeature, so being on the image classpath is all the wiring it needs.
-JVM_CHANNEL_JAR="${NMVN_JVM_CHANNEL_JAR:-$HOME/.m2/repository/org/apidesign/graalvm/jvm-channel/2.0-SNAPSHOT/jvm-channel-2.0-SNAPSHOT.jar}"
+# released on Maven Central; the sidecar Maven build above already resolved it into the local
+# repo. Version MUST match prebuilt-feature/pom.xml. Its
+# META-INF/native-image/native-image.properties self-registers the ChannelFeature, so being on
+# the image classpath is all the wiring it needs.
+JVM_CHANNEL_VERSION="${NMVN_JVM_CHANNEL_VERSION:-1.1}"
+JVM_CHANNEL_JAR="${NMVN_JVM_CHANNEL_JAR:-$HOME/.m2/repository/org/apidesign/graalvm/jvm-channel/$JVM_CHANNEL_VERSION/jvm-channel-$JVM_CHANNEL_VERSION.jar}"
 if [ ! -f "$JVM_CHANNEL_JAR" ]; then
   echo "Error: jvm-channel jar not found at $JVM_CHANNEL_JAR"
-  echo "Build it first:  (cd /path/to/graalvm-native-libs && mvn install -DskipTests -pl jvm-channel -am)"
-  echo "or point NMVN_JVM_CHANNEL_JAR at the jar."
+  echo "It should have been resolved by the sidecar Maven build — check that the version here"
+  echo "matches native/prebuilt-feature/pom.xml, or point NMVN_JVM_CHANNEL_JAR at the jar."
   exit 1
 fi
 cp_append "$JVM_CHANNEL_JAR"

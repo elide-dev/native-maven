@@ -54,9 +54,11 @@ NmvnLauncher already established.
 
 ## Supporting changes
 
-- `native/prebuilt-feature/pom.xml` — `org.apidesign.graalvm:jvm-channel:2.0-SNAPSHOT`
-  dependency. **Prereq**: install it from a local checkout first:
-  `(cd .../graalvm-native-libs && mvn install -DskipTests -pl jvm-channel -am)`.
+- `native/prebuilt-feature/pom.xml` — `org.apidesign.graalvm:jvm-channel:1.1`
+  dependency (released on Maven Central; resolved automatically, no local
+  checkout needed). The code targets the 1.1 API; upgrading to the 2.x line
+  will require catching the `ClassNotFoundException` it adds to
+  `JVM.executeMain`.
 - `native/prebuilt-feature/src/main/resources/META-INF/sisu/javax.inject.Named`
   — the sisu index is a checked-in file; the new `@Named` component needs its line.
 - `nmvn.PrebuiltReflectionFeature.SIDECAR_COMPONENTS` — every sidecar `@Named`
@@ -67,8 +69,9 @@ NmvnLauncher already established.
   dist's JDK 17 ceiling); these modules are not part of the shipped dist and
   hard-require GraalVM 25+ anyway.
 - `build-scripts/non-crema/build-nmvn-prebuilt.sh` — appends the jvm-channel
-  jar to the image classpath (override via `NMVN_JVM_CHANNEL_JAR`; its bundled
-  `native-image.properties` self-registers everything else) and adds
+  jar (from the local repo, where the sidecar Maven build resolves it; version
+  via `NMVN_JVM_CHANNEL_VERSION`, exact jar via `NMVN_JVM_CHANNEL_JAR`; its
+  bundled `native-image.properties` self-registers everything else) and adds
   `-H:IncludeResources='nmvn/hotspot/.*'` for the wrapper bytecode.
 
 ## How to test
@@ -144,5 +147,9 @@ of a delegated goal fails the build; `-Dnmvn.jvm.fallback=false` gate.
 8. **Mixed log formats.** Delegated output appears as the inner Maven's plain
    `[INFO]` lines between the native side's logger lines. Cosmetic.
 
-9. **SNAPSHOT dependency.** jvm-channel 2.0-SNAPSHOT from a local checkout;
-   pin a released version (or vendor the jar) before CI/distribution.
+9. ~~**SNAPSHOT dependency.**~~ *Resolved 2026-08-12*: pinned to the released
+   `jvm-channel:1.1` from Maven Central. The only delta vs the 2.0 snapshot
+   line is error-reporting polish in jvm-channel itself (`executeMain` asserts
+   instead of throwing on a missing class) — the runner's empty-exit-file
+   check covers that case, and the wrapper extraction already fails loudly
+   before `executeMain` can be reached with a missing class.

@@ -92,11 +92,7 @@ final class HotspotMavenRunner {
             mainArgs.add(exitFile.toString());
             mainArgs.addAll(args);
             LOG.info("nmvn: running {} on HotSpot JVM: mvn {}", mojoExecution, String.join(" ", args));
-            try {
-                jvm().executeMain(MAIN_CLASS.replace('.', '/'), mainArgs.toArray(new String[0]));
-            } catch (ClassNotFoundException e) {
-                throw new IOException("HotSpot-side wrapper not found — bad java.class.path?", e);
-            }
+            jvm().executeMain(MAIN_CLASS.replace('.', '/'), mainArgs.toArray(new String[0]));
             int exitCode = readExitCode(exitFile);
             if (exitCode != 0) {
                 throw new HotspotGoalFailedException(
