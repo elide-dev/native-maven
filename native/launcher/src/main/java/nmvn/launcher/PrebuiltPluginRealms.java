@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package nmvn;
+package nmvn.launcher;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;

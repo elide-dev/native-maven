@@ -37,6 +37,8 @@ import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
+import nmvn.launcher.JvmFallbackBuildPluginManager;
+import nmvn.launcher.PrebuiltPluginRealms;
 import org.graalvm.nativeimage.hosted.Feature;
 import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.nativeimage.hosted.RuntimeResourceAccess;

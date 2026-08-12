@@ -22,7 +22,6 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.net.URISyntaxException;
 
-import nmvn.PrebuiltPluginRealms;
 import org.apache.maven.cling.MavenCling;
 import org.codehaus.plexus.classworlds.ClassWorld;
 import org.codehaus.plexus.classworlds.realm.ClassRealm;

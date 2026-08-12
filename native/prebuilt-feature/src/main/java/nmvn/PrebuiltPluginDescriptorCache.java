@@ -23,6 +23,7 @@ import javax.inject.Singleton;
 
 import java.util.List;
 
+import nmvn.launcher.PrebuiltPluginRealms;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.plugin.DefaultPluginDescriptorCache;
 import org.apache.maven.plugin.InvalidPluginDescriptorException;

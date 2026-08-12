@@ -46,6 +46,7 @@ import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
+import nmvn.launcher.PrebuiltPluginRealms;
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
 import org.apache.maven.plugin.descriptor.Parameter;
 import org.codehaus.plexus.component.repository.ComponentDescriptor;
