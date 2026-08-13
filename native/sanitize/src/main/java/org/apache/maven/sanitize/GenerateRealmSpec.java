@@ -32,6 +32,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 
+import org.apache.maven.api.plugin.annotations.Mojo;
+import org.apache.maven.api.plugin.annotations.Parameter;
+import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugin.MojoFailureException;
+
 /**
  * Maven-build-side replacement for the bash prep pipeline of build-nmvn-prebuilt.sh (step 2 of the
  * native-build-tools migration): given a list of plugin entries {@code g:a:v[|canonical-deps]},
@@ -75,32 +81,50 @@ import java.util.zip.ZipEntry;
  * because the pom references them unconditionally and PrebuiltPluginRealms reads a blank spec as
  * "registry empty".
  */
-public final class GenerateRealmSpec {
+@Mojo(name = "generate-realm-spec")
+public final class GenerateRealmSpec extends AbstractMojo {
+    @Parameter
+    Path mavenHome;
 
-    public static void main(String[] args) throws Exception {
-        Path mavenHome = null;
-        Path work = null;
-        Path argfile = null;
-        List<Path> extraCp = new ArrayList<>();
-        StringBuilder pluginsInput = new StringBuilder();
-        for (int i = 0; i < args.length; i++) {
-            switch (args[i]) {
-                case "--maven-home" -> mavenHome = Path.of(args[++i]);
-                case "--work" -> work = Path.of(args[++i]);
-                case "--argfile" -> argfile = Path.of(args[++i]);
-                case "--extra-cp" -> extraCp.add(Path.of(args[++i]));
-                case "--plugins" -> pluginsInput.append('\n').append(args[++i]);
-                case "--plugins-file" -> {
-                    Path f = Path.of(args[++i]);
-                    if (!args[i].isBlank() && Files.isRegularFile(f)) {
-                        pluginsInput.append('\n').append(Files.readString(f));
-                    }
+    @Parameter
+    Path work;
+
+    @Parameter
+    Path argfile;
+
+    @Parameter
+    List<Path> extraCp = new ArrayList<>();
+
+    @Parameter
+    List<String> plugins;
+
+    @Parameter
+    Path pluginsFile;
+
+    @Override
+    public void execute() throws MojoExecutionException, MojoFailureException {
+        try {
+            executeImpl();
+        } catch (Exception ex) {
+            throw new MojoExecutionException(ex);
+        }
+    }
+
+    private void executeImpl() throws Exception {
+        var pluginsInput = new StringBuilder();
+        if (plugins != null) {
+            for (var arg : plugins) {
+                if (arg != null) {
+                    pluginsInput.append('\n').append(arg);
                 }
-                default -> throw new IllegalArgumentException("Unknown flag: " + args[i]);
             }
         }
+        if (pluginsFile != null && Files.isRegularFile(pluginsFile)) {
+            pluginsInput.append('\n').append(Files.readString(pluginsFile));
+        }
+
         if (mavenHome == null || work == null || argfile == null) {
-            throw new IllegalArgumentException("--maven-home, --work and --argfile are required");
+            throw new IllegalArgumentException("mavenHome, work and argfile are required");
         }
         if (!Files.isDirectory(mavenHome.resolve("lib"))) {
             throw new IllegalStateException("Not a Maven dist (no lib/): " + mavenHome
@@ -427,5 +451,5 @@ public final class GenerateRealmSpec {
         Files.writeString(argfile, content.toString(), StandardCharsets.UTF_8);
     }
 
-    private GenerateRealmSpec() {}
+    public GenerateRealmSpec() {}
 }

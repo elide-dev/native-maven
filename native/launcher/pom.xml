@@ -164,11 +164,10 @@
     </plugins>
   </build>
   <profiles>
-    <!-- Native image build via native-build-tools (step 2 of the migration away from
-         build-scripts/). Static image flags live in the sidecar jar's META-INF
-         native-image.properties; everything DYNAMIC (dist-exact classpath, realm spec, builder
-         heap, metadata dir) is produced by GenerateRealmSpec into an @argfile that buildArgs
-         references — the pom stays static.
+    <!-- Native image build via native-build-tools (migration away from build-scripts/).
+         Flag layering: INVARIANT flags ride in the sidecar jar's META-INF native-image.properties;
+         PARAMETERIZED flags are literal buildArgs below; the COMPUTED image classpath (dist glob)
+         is produced by sanitize-maven-plugin:generate-realm-spec into the @argfile.
 
          Usage (dist must be built first — the image classpath is the dist's boot/ + lib/):
            mvn -Pnative package -pl native/launcher -am -DskipTests \
@@ -186,20 +185,14 @@
         <nmvn.mavenHome>${maven.multiModuleProjectDirectory}/apache-maven/target/apache-maven-${project.version}</nmvn.mavenHome>
         <nmvn.configDir>${maven.multiModuleProjectDirectory}/reflection-non-crema</nmvn.configDir>
       </properties>
-      <dependencies>
-        <!-- prep tool (GenerateRealmSpec + SanitizeRealmJars); test scope: build-time only,
-             must never leak onto the image classpath -->
-        <dependency>
-          <groupId>org.apache.maven</groupId>
-          <artifactId>sanitize</artifactId>
-          <version>4.1.0-SNAPSHOT</version>
-          <scope>test</scope>
-        </dependency>
-      </dependencies>
       <build>
         <plugins>
-          <!-- exposes ${org.apache.maven:sanitize:jar}, ${org.apache.maven:prebuilt-feature:jar},
-               ${org.apidesign.graalvm:jvm-channel:jar} for the exec arguments below -->
+          <!--
+            exposes ${org.apache.maven:prebuilt-feature:jar},
+            ${org.apidesign.graalvm:jvm-channel:jar}
+            for the sanitize Maven plugin
+            below
+          -->
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-dependency-plugin</artifactId>
@@ -214,37 +207,28 @@
             </executions>
           </plugin>
           <plugin>
-            <groupId>org.codehaus.mojo</groupId>
-            <artifactId>exec-maven-plugin</artifactId>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>sanitize-maven-plugin</artifactId>
             <executions>
               <execution>
                 <id>generate-realm-spec</id>
                 <goals>
-                  <goal>exec</goal>
+                  <goal>generate-realm-spec</goal>
                 </goals>
                 <phase>prepare-package</phase>
-                <!-- combine.self: do NOT inherit the run-the-launcher commandlineArgs above -->
-                <configuration combine.self="override">
-                  <executable>${java.home}/bin/java</executable>
-                  <arguments>
-                    <argument>-cp</argument>
-                    <argument>${org.apache.maven:sanitize:jar}</argument>
-                    <argument>org.apache.maven.sanitize.GenerateRealmSpec</argument>
-                    <argument>--maven-home</argument>
-                    <argument>${nmvn.mavenHome}</argument>
-                    <argument>--work</argument>
-                    <argument>${project.build.directory}/nmvn</argument>
-                    <argument>--argfile</argument>
-                    <argument>${project.build.directory}/nmvn/native-image.args</argument>
-                    <argument>--extra-cp</argument>
+                <configuration>
+                  <mavenHome>${nmvn.mavenHome}</mavenHome>
+                  <work>${project.build.directory}/nmvn</work>
+                  <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
+                  <extraCp>
+                    <!-- should use dependencies rather than JARs -->
                     <argument>${org.apache.maven:prebuilt-feature:jar}</argument>
-                    <argument>--extra-cp</argument>
                     <argument>${org.apidesign.graalvm:jvm-channel:jar}</argument>
-                    <argument>--plugins</argument>
+                  </extraCp>
+                  <plugins>
                     <argument>${nmvn.plugins}</argument>
-                    <argument>--plugins-file</argument>
-                    <argument>${nmvn.pluginsFile}</argument>
-                  </arguments>
+                  </plugins>
+                  <pluginsFile>${nmvn.pluginsFile}</pluginsFile>
                 </configuration>
               </execution>
             </executions>
