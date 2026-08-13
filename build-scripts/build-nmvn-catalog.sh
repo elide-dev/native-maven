@@ -6,10 +6,14 @@
 #   ./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 #   # → build/nmvn-spring-4.1.0
 ##
-# Delegates each catalog entry to <variant>/build-nmvn-prebuilt.sh with that entry's plugin GAV
-# list. The variant is chosen via NMVN_VARIANT (default: crema):
+# Builds each catalog entry with the Maven native profile ("mvn -Pnative[,crema] package
+# -pl native/launcher -am"), passing that entry's plugin GAV list via -Dnmvn.pluginsFile.
+# The variant is chosen via NMVN_VARIANT (default: crema):
 #   crema      — unbaked plugins still load dynamically at run time (needs a Crema-enabled GraalVM)
-#   non-crema  — no runtime class loading; ONLY the baked plugins work (stock GraalVM suffices)
+#   non-crema  — no runtime class loading; baked plugins run natively, everything else on the
+#                in-process HotSpot JVM fallback (stock GraalVM suffices)
+# The per-variant build-scripts/<variant>/build-nmvn-prebuilt.sh remain as the standalone
+# reference implementation; this driver no longer calls them.
 #
 # Cost: full GraalVM native-image of ~1GB; tens of minutes and many GB RAM. Prefer --dry-run first.
 #
@@ -22,9 +26,30 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 NMVN_VARIANT="${NMVN_VARIANT:-crema}"
-PREBUILT="$SCRIPT_DIR/$NMVN_VARIANT/build-nmvn-prebuilt.sh"
-if [ ! -f "$PREBUILT" ]; then
-  echo "Error: NMVN_VARIANT='$NMVN_VARIANT' has no $PREBUILT (expected 'crema' or 'non-crema')" >&2
+case "$NMVN_VARIANT" in
+  crema) MVN_PROFILES="native,crema" ;;
+  non-crema) MVN_PROFILES="native" ;;
+  *)
+    echo "Error: NMVN_VARIANT='$NMVN_VARIANT' (expected 'crema' or 'non-crema')" >&2
+    exit 2
+    ;;
+esac
+
+# The dist is still required (image classpath, exported artifacts, sanitize -cp). Resolved by
+# glob because CI strips -SNAPSHOT from the poms while keeping the -SNAPSHOT dist dir name —
+# the profile's ${project.version}-derived default would miss there, so it is passed explicitly.
+NMVN_MAVEN_HOME="${NMVN_MAVEN_HOME:-}"
+if [ -z "$NMVN_MAVEN_HOME" ]; then
+  for d in "$ROOT_DIR"/apache-maven/target/apache-maven-*; do
+    if [ -d "$d" ] && { [ -f "$d/bin/mvn" ] || [ -f "$d/bin/mvn.cmd" ]; }; then
+      NMVN_MAVEN_HOME="$d"
+      break
+    fi
+  done
+fi
+if [ -z "$NMVN_MAVEN_HOME" ] || [ ! -d "$NMVN_MAVEN_HOME/lib" ]; then
+  echo "Error: no Maven dist under $ROOT_DIR/apache-maven/target — build it first" >&2
+  echo "       (./mvnw clean install -DskipTests from the repo root)" >&2
   exit 2
 fi
 
@@ -185,31 +210,35 @@ PY
     continue
   fi
 
-  # prebuilt writes $NMVN_OUT_DIR/nmvn-native(.exe); rename to the catalog binary name there.
-  # Wipe any stale image so a failed previous run cannot be mistaken for this entry.
-  rm -f "$NMVN_OUT_DIR/nmvn-native" "$NMVN_OUT_DIR/nmvn-native.exe"
+  # One plugin spec per line, consumed via -Dnmvn.pluginsFile (a -D value could not carry the
+  # |canonical-deps entries safely). Written up front; also serves as the build record.
+  printf '%s\n' "${GAVS[@]}" > "$NMVN_OUT_DIR/$NAME.plugins"
+
+  # The profile writes native/launcher/target/$NAME(.exe); wipe stale copies of both locations
+  # so a failed previous run cannot be mistaken for this entry.
+  TARGET_DIR="$ROOT_DIR/native/launcher/target"
+  rm -f "$TARGET_DIR/$NAME" "$TARGET_DIR/$NAME.exe" "$NMVN_OUT_DIR/$NAME" "$NMVN_OUT_DIR/$NAME.exe"
 
   if (
     cd "$ROOT_DIR"
-    export NMVN_OUT_DIR
-    # Only forward work dir when the caller set it (empty would defeat prebuilt's default).
-    [ -n "${NMVN_WORK_DIR:-}" ] && export NMVN_WORK_DIR
-    "$PREBUILT" "${GAVS[@]}"
+    ./mvnw -P"$MVN_PROFILES" package -pl native/launcher -am -B -DskipTests \
+      -Dnmvn.pluginsFile="$NMVN_OUT_DIR/$NAME.plugins" \
+      -Dnmvn.imageName="$NAME" \
+      -Dnmvn.mavenHome="$NMVN_MAVEN_HOME"
   ); then
     OUT_SRC=""
     OUT_DST="$NMVN_OUT_DIR/$NAME"
-    if [ -f "$NMVN_OUT_DIR/nmvn-native" ]; then
-      OUT_SRC="$NMVN_OUT_DIR/nmvn-native"
-    elif [ -f "$NMVN_OUT_DIR/nmvn-native.exe" ]; then
-      OUT_SRC="$NMVN_OUT_DIR/nmvn-native.exe"
+    if [ -f "$TARGET_DIR/$NAME" ]; then
+      OUT_SRC="$TARGET_DIR/$NAME"
+    elif [ -f "$TARGET_DIR/$NAME.exe" ]; then
+      OUT_SRC="$TARGET_DIR/$NAME.exe"
       OUT_DST="$NMVN_OUT_DIR/$NAME.exe"
     fi
     if [ -z "$OUT_SRC" ]; then
-      echo "!!! $NAME: build reported success but produced no nmvn-native(.exe) under $NMVN_OUT_DIR" >&2
+      echo "!!! $NAME: build reported success but produced no $NAME(.exe) under $TARGET_DIR" >&2
       exit 1
     else
       mv "$OUT_SRC" "$OUT_DST"
-      printf '%s\n' "${GAVS[@]}" > "$NMVN_OUT_DIR/$NAME.plugins"
       ACTUAL=$(du -m "$OUT_DST" | cut -f1)
       echo ">>> $OUT_DST: ${ACTUAL}MB"
       BUILT+=("$OUT_DST	${ACTUAL}MB")
