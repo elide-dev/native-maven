@@ -174,7 +174,8 @@
              -Dnmvn.plugins="g:a:v,g:a:v,..."          (or -Dnmvn.pluginsFile=path; entries with
                                                         per-plugin |deps keys: whitespace-separated)
          Output: target/${nmvn.imageName}. No plugins → baseline image (JVM fallback serves goals).
-         Not yet covered vs the script: the crema variant, PGO, -Os. -->
+         Variants: -Pnative alone = non-crema; -Pnative,crema = Crema (see the crema profile).
+         Not yet covered vs the script: PGO, -Os. -->
     <profile>
       <id>native</id>
       <properties>
@@ -237,7 +238,6 @@
           <plugin>
             <groupId>org.graalvm.buildtools</groupId>
             <artifactId>native-maven-plugin</artifactId>
-            <version>1.1.8</version>
             <configuration>
               <imageName>${nmvn.imageName}</imageName>
               <mainClass>nmvn.launcher.NmvnLauncher</mainClass>
@@ -271,6 +271,62 @@
                 <phase>package</phase>
               </execution>
             </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <!-- MODIFIER profile — always together with native: mvn -Pnative,crema package ...
+         Carries only the deltas vs the base native profile; everything shared (prep mojo, NBT
+         config, static sidecar flags) comes from -Pnative. Needs a Crema-enabled GraalVM
+         (development builds: -H:+RuntimeClassLoading is not in stock releases). -->
+    <profile>
+      <id>crema</id>
+      <properties>
+        <!-- crema metadata set: no guice-proxy JSON (Crema defines proxies at run time) and no
+             predefined classes (RuntimeClassLoading covers runtime-defined classes) -->
+        <nmvn.configDir>${maven.multiModuleProjectDirectory}/reflection-crema</nmvn.configDir>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <buildArgs combine.children="append">
+                <buildArg>-H:+RuntimeClassLoading</buildArg>
+                <buildArg>-H:+GraalJITCompileAtRuntime</buildArg>
+                <!-- Crema's runtime class loading serves non-baked plugins natively; delegating
+                     them to a HotSpot JVM would bypass the very path this variant exercises.
+                     Baked by PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT (build-time init);
+                     runtime -Dnmvn.jvm.fallback=true re-enables per invocation. -->
+                <buildArg>-Dnmvn.jvm.fallback.default=false</buildArg>
+                <!-- Blanket preserves: runtime-loaded plugin classes reflect over core/JDK types
+                     on paths no build-time analysis can see, so the crema variant keeps the
+                     keep-everything registration the non-crema variant replaced with precise
+                     agent metadata (see the size discussion in the non-crema script history). -->
+                <buildArg>-H:Preserve=module=java.base</buildArg>
+                <buildArg>-H:Preserve=module=java.logging</buildArg>
+                <buildArg>-H:Preserve=module=java.xml</buildArg>
+                <buildArg>-H:Preserve=module=java.desktop</buildArg>
+                <buildArg>-H:Preserve=module=java.compiler</buildArg>
+                <buildArg>-H:Preserve=module=jdk.compiler</buildArg>
+                <buildArg>-H:Preserve=module=jdk.unsupported</buildArg>
+                <buildArg>-H:Preserve=package=org.apache.maven.*</buildArg>
+                <buildArg>-H:Preserve=package=com.ctc.wstx.*</buildArg>
+                <buildArg>-H:Preserve=package=org.apache.commons.logging.impl.*</buildArg>
+                <buildArg>-H:Preserve=package=org.eclipse.aether.*</buildArg>
+                <buildArg>-H:Preserve=package=org.slf4j.*</buildArg>
+                <buildArg>-H:Preserve=package=org.codehaus.plexus.*</buildArg>
+                <buildArg>-H:Preserve=package=nmvn.*</buildArg>
+                <buildArg>-H:Preserve=package=com.google.inject.*</buildArg>
+                <buildArg>-H:Preserve=package=com.google.common.*</buildArg>
+                <buildArg>-H:Preserve=package=org.eclipse.sisu.*</buildArg>
+                <buildArg>-H:Preserve=package=org.sonatype.*</buildArg>
+                <buildArg>-H:Preserve=package=org.fusesource.*</buildArg>
+                <buildArg>-H:Preserve=package=org.jline.*</buildArg>
+                <buildArg>-H:Preserve=package=javax.inject.*</buildArg>
+              </buildArgs>
+            </configuration>
           </plugin>
         </plugins>
       </build>

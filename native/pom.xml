@@ -15,6 +15,15 @@
     <module>launcher</module>
   </modules>
   <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.graalvm.buildtools</groupId>
+          <artifactId>native-maven-plugin</artifactId>
+          <version>1.1.8</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
     <plugins>
       <!-- Disabling Apache plugins that aren't essential for code execution.
             We don't have the same licenses (yet) and we don't need Apache check
