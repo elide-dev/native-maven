@@ -150,7 +150,14 @@ public final class GenerateRealmSpec extends AbstractMojo {
                 }
             }
         }
-        if (pluginsFile != null && Files.isRegularFile(pluginsFile)) {
+        if (pluginsFile != null && !pluginsFile.toString().isEmpty()) {
+            // Fail LOUDLY on a missing file: silently skipping would bake a baseline image with
+            // nothing in it. Classic cause: a relative path — Maven resolves relative Path
+            // parameters against the MODULE basedir (native/launcher), not the invocation dir.
+            if (!Files.isRegularFile(pluginsFile)) {
+                throw new IllegalArgumentException("pluginsFile does not exist: " + pluginsFile
+                        + " (relative paths resolve against the module basedir — pass an absolute path)");
+            }
             pluginsInput.append('\n').append(Files.readString(pluginsFile));
         }
 

@@ -13,10 +13,10 @@ Pipeline
     build/catalogs/nmvn-spring-<version>.json
             │
             ▼
-    ../build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-<version>.json
+    mvnw -Pnative[,crema] package -pl native/launcher -am -Dnmvn.pluginsFile=<.plugins> ...
             │
             ▼
-    build/nmvn-spring-<version>   (+ build/work/ scratch)
+    native/launcher/target/nmvn-spring-<version>
 
 Maven dist used for baking stays in apache-maven/target/ (not under build/).
 
@@ -27,7 +27,7 @@ Product policy (current)
 Usage
 -----
     ./resolve_boot_catalog.py --boot-version 4.1.0 --language java
-    ../build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
+    # then build with the Maven native profile (see the hint the script prints)
 """
 
 from __future__ import annotations
@@ -358,6 +358,19 @@ def write_json(path: Path, data: dict) -> None:
     print(f">>> wrote {path}", file=sys.stderr)
 
 
+def write_plugins_files(catalog_path: Path, data: dict) -> None:
+    """One <binary-name>.plugins next to the catalog JSON per binary entry: the newline-separated
+    GAV list the Maven native profiles consume directly via -Dnmvn.pluginsFile (LF-only — a CR
+    inside a coordinate corrupts the realm spec downstream)."""
+    for binary in data["binaries"]:
+        path = catalog_path.parent / f"{binary['name']}.plugins"
+        with path.open("w", encoding="utf-8", newline="\n") as fh:
+            for plugin in binary["plugins"]:
+                fh.write(plugin)
+                fh.write("\n")
+        print(f">>> wrote {path}", file=sys.stderr)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
@@ -435,6 +448,7 @@ def main() -> None:
         if not emit_path.is_absolute():
             emit_path = (Path.cwd() / emit_path).resolve()
         write_json(emit_path, catalog)
+        write_plugins_files(emit_path, catalog)
 
     if not args.print_only:
         if args.emit:
@@ -447,10 +461,13 @@ def main() -> None:
             cat_hint = str(cat_path.resolve().relative_to(REPO))
         except ValueError:
             cat_hint = str(cat_path)
+        plugins_hint = str(Path(cat_hint).parent / f"{catalog['binary']}.plugins")
         print(
-            "\nNext: build the native image from this catalog:\n"
-            f"  ./build-scripts/build-nmvn-catalog.sh {cat_hint}\n"
-            f"  # from repo root; binary → build/{catalog['binary']}",
+            "\nNext: build the native image from this catalog (from the repo root):\n"
+            f"  ./mvnw -Pnative package -pl native/launcher -am -DskipTests \\\n"
+            f"    -Dnmvn.pluginsFile={plugins_hint} -Dnmvn.imageName={catalog['binary']}\n"
+            f"  # add ,crema to -P for the crema variant; binary → native/launcher/target/{catalog['binary']}\n"
+            f"  # (pass -Dnmvn.pluginsFile as an ABSOLUTE path when not running from the repo root)",
             file=sys.stderr,
         )
 

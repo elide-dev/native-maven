@@ -74,10 +74,9 @@ NmvnLauncher already established.
   `enforceBytecodeVersion` rule bans jvm-channel (JDK 25 bytecode vs the
   dist's JDK 17 ceiling); these modules are not part of the shipped dist and
   hard-require GraalVM 25+ anyway.
-- `build-scripts/non-crema/build-nmvn-prebuilt.sh` — appends the jvm-channel
-  jar (from the local repo, where the sidecar Maven build resolves it; version
-  via `NMVN_JVM_CHANNEL_VERSION`, exact jar via `NMVN_JVM_CHANNEL_JAR`; its
-  bundled `native-image.properties` self-registers everything else). The
+- the jvm-channel jar reaches the image classpath as an `--extra-cp` argument
+  of the generate-realm-spec mojo (see the launcher pom's `native` profile);
+  its bundled `native-image.properties` self-registers everything else. The
   `-H:IncludeResources=nmvn/hotspot/.*` pattern for the wrapper bytecode lives
   in the sidecar's own
   `META-INF/native-image/org.apache.maven/nmvn-sidecar/native-image.properties`
@@ -87,16 +86,16 @@ NmvnLauncher already established.
 
 ```bash
 # image with the example project's default plugin versions, MINUS maven-jar-plugin
-./build-scripts/non-crema/build-nmvn-prebuilt.sh \
-  org.apache.maven.plugins:maven-clean-plugin:3.4.0 \
-  org.apache.maven.plugins:maven-resources-plugin:3.3.1 \
-  org.apache.maven.plugins:maven-compiler-plugin:3.13.0 \
-  org.apache.maven.plugins:maven-surefire-plugin:3.5.2 \
-  org.apache.maven.plugins:maven-install-plugin:3.1.3
+./mvnw -Pnative package -pl native/launcher -am -DskipTests -Dnmvn.plugins="\
+org.apache.maven.plugins:maven-clean-plugin:3.4.0,\
+org.apache.maven.plugins:maven-resources-plugin:3.3.1,\
+org.apache.maven.plugins:maven-compiler-plugin:3.13.0,\
+org.apache.maven.plugins:maven-surefire-plugin:3.5.2,\
+org.apache.maven.plugins:maven-install-plugin:3.1.3"
 
 cd examples/java-maven-sample-project
 MAVEN_HOME=$PWD/../../apache-maven/target/apache-maven-4.1.0-SNAPSHOT \
-  ../../build/nmvn-native clean package
+  ../../native/launcher/target/nmvn-native clean package
 ```
 
 Expected: routing logs show clean/resources/compiler/surefire → BAKED and
