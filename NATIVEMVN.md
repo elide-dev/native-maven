@@ -82,7 +82,8 @@ specified by `--mode` argument. There are following supported values:
    those plugins must be _"baked in"_ into appropriate _flavor_ of _Native Maven_
    binary. If the plugin isn't _"baked in"_, then an **error is emitted** and
    the execution of the process ends with an error. The error message contains
-   suggestions of possible follow up actions.
+   suggestions of possible follow up actions. Running fully in _native mode_
+   is usually the fastest (to start, as well as to run).
 
 - `elide mvn -- --mode=mixed` - runs all the _"baked in"_ plugins in native mode
    and all the others _one by one_ in a dedicated HotSpot JVM. This mode provides
