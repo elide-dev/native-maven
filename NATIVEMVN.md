@@ -27,7 +27,7 @@ that starts fast, runs fast and optimizes for a selected developer workflow.
 The way to use _Native Maven_ is to [download and install Elide](https://elide.help/docs/installation)
 and then execute:
 ```
-$ elide mvn package
+$ elide mvn -- package
 ```
 in a directory with an existing Maven project.
 
