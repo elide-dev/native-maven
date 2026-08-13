@@ -32,6 +32,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 
+import org.apache.maven.api.plugin.annotations.Mojo;
+import org.apache.maven.api.plugin.annotations.Parameter;
+import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugin.MojoFailureException;
+
 /**
  * Maven-build-side replacement for the bash prep pipeline of build-nmvn-prebuilt.sh (step 2 of the
  * native-build-tools migration): given a list of plugin entries {@code g:a:v[|canonical-deps]},
@@ -76,34 +82,52 @@ import java.util.zip.ZipEntry;
  * <p>With no plugins at all the spec/sanitize steps are skipped (baseline image, parity with the
  * script's no-args mode) and the argfile carries no {@code -Dnmvn.prebuilt.*} entries.
  */
-public final class GenerateRealmSpec {
+@Mojo(name = "generate-realm-spec")
+public final class GenerateRealmSpec extends AbstractMojo {
+    @Parameter
+    Path mavenHome;
 
-    public static void main(String[] args) throws Exception {
-        Path mavenHome = null;
-        Path work = null;
-        Path argfile = null;
-        Path configDir = null;
-        List<Path> extraCp = new ArrayList<>();
-        StringBuilder pluginsInput = new StringBuilder();
-        String maxRamPercentage = "80.0";
-        for (int i = 0; i < args.length; i++) {
-            switch (args[i]) {
-                case "--maven-home" -> mavenHome = Path.of(args[++i]);
-                case "--work" -> work = Path.of(args[++i]);
-                case "--argfile" -> argfile = Path.of(args[++i]);
-                case "--config-dir" -> configDir = Path.of(args[++i]);
-                case "--extra-cp" -> extraCp.add(Path.of(args[++i]));
-                case "--plugins" -> pluginsInput.append('\n').append(args[++i]);
-                case "--plugins-file" -> {
-                    Path f = Path.of(args[++i]);
-                    if (!args[i].isBlank() && Files.isRegularFile(f)) {
-                        pluginsInput.append('\n').append(Files.readString(f));
-                    }
-                }
-                case "--max-ram-percentage" -> maxRamPercentage = args[++i];
-                default -> throw new IllegalArgumentException("Unknown flag: " + args[i]);
+    @Parameter
+    Path work;
+
+    @Parameter
+    Path argfile;
+
+    @Parameter
+    Path configDir;
+
+    @Parameter
+    List<Path> extraCp = new ArrayList<>();
+
+    @Parameter
+    List<String> plugins;
+
+    @Parameter
+    Path pluginsFile;
+
+    @Parameter
+    String maxRamPercentage = "80.0";
+
+    @Override
+    public void execute() throws MojoExecutionException, MojoFailureException {
+        try {
+            executeImpl();
+        } catch (Exception ex) {
+            throw new MojoExecutionException(ex);
+        }
+    }
+
+    private void executeImpl() throws Exception {
+        var pluginsInput = new StringBuilder();
+        for (var arg : plugins) {
+            pluginsInput.append('\n').append(arg);
+        }
+        if (pluginsFile != null) {
+            if (Files.isRegularFile(pluginsFile)) {
+                pluginsInput.append('\n').append(Files.readString(pluginsFile));
             }
         }
+
         if (mavenHome == null || work == null || argfile == null || configDir == null) {
             throw new IllegalArgumentException("--maven-home, --work, --argfile and --config-dir are required");
         }
@@ -443,5 +467,5 @@ public final class GenerateRealmSpec {
         Files.writeString(argfile, content.toString(), StandardCharsets.UTF_8);
     }
 
-    private GenerateRealmSpec() {}
+    public GenerateRealmSpec() {}
 }

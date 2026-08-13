@@ -6,8 +6,8 @@
     <artifactId>native</artifactId>
     <version>4.1.0-SNAPSHOT</version>
   </parent>
-  <artifactId>sanitize</artifactId>
-  <packaging>jar</packaging>
+  <artifactId>sanitize-maven-plugin</artifactId>
+  <packaging>maven-plugin</packaging>
   <properties>
     <!-- SanitizeRealmJars is using API from version 25 -->
     <minimalJavaBuildVersion>25</minimalJavaBuildVersion>
