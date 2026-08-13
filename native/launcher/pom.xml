@@ -186,20 +186,14 @@
         <nmvn.mavenHome>${maven.multiModuleProjectDirectory}/apache-maven/target/apache-maven-${project.version}</nmvn.mavenHome>
         <nmvn.configDir>${maven.multiModuleProjectDirectory}/reflection-non-crema</nmvn.configDir>
       </properties>
-      <dependencies>
-        <!-- prep tool (GenerateRealmSpec + SanitizeRealmJars); test scope: build-time only,
-             must never leak onto the image classpath -->
-        <dependency>
-          <groupId>org.apache.maven</groupId>
-          <artifactId>sanitize</artifactId>
-          <version>4.1.0-SNAPSHOT</version>
-          <scope>test</scope>
-        </dependency>
-      </dependencies>
       <build>
         <plugins>
-          <!-- exposes ${org.apache.maven:sanitize:jar}, ${org.apache.maven:prebuilt-feature:jar},
-               ${org.apidesign.graalvm:jvm-channel:jar} for the exec arguments below -->
+          <!--
+            exposes ${org.apache.maven:prebuilt-feature:jar},
+            ${org.apidesign.graalvm:jvm-channel:jar}
+            for the sanitize Maven plugin
+            below
+          -->
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-dependency-plugin</artifactId>
@@ -229,6 +223,7 @@
                   <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
                   <configDir>${nmvn.configDir}</configDir>
                   <extraCp>
+                    <!-- should use dependencies rather than JARs -->
                     <argument>${org.apache.maven:prebuilt-feature:jar}</argument>
                     <argument>${org.apidesign.graalvm:jvm-channel:jar}</argument>
                   </extraCp>
