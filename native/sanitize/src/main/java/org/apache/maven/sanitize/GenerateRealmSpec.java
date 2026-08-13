@@ -18,6 +18,8 @@
  */
 package org.apache.maven.sanitize;
 
+import javax.inject.Inject;
+
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -37,6 +39,17 @@ import org.apache.maven.api.plugin.annotations.Parameter;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
+import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.graph.Dependency;
+import org.eclipse.aether.graph.Exclusion;
+import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.resolution.ArtifactResult;
+import org.eclipse.aether.resolution.DependencyRequest;
+import org.eclipse.aether.util.artifact.JavaScopes;
+import org.eclipse.aether.util.filter.DependencyFilterUtils;
 
 /**
  * Maven-build-side replacement for the bash prep pipeline of build-nmvn-prebuilt.sh (step 2 of the
@@ -45,11 +58,11 @@ import org.apache.maven.plugin.MojoFailureException;
  * into the sidecar jar's {@code META-INF/native-image} properties:
  *
  * <ol>
- * <li>Resolves each plugin's runtime classpath by SYNTHESIZING a throwaway pom (per-plugin
- *     dependencies declared both as dependencies and dependencyManagement, exclusions honored) and
- *     forking the DIST's {@code mvn dependency:build-classpath} — deliberately the same mechanism
- *     as the bash script, so user settings (mirrors, proxies, local repo) behave identically. A
- *     future step replaces this with an injected Aether {@code RepositorySystem} inside a mojo.</li>
+ * <li>Resolves each plugin's runtime classpath IN-PROCESS through the host Maven's injected
+ *     {@code RepositorySystem}, with the same CollectRequest shape stock Maven's
+ *     DefaultPluginDependenciesResolver uses for plugin realms (plugin as root, per-plugin
+ *     dependencies direct + managed, exclusions honored, runtime filter). The injected session
+ *     inherits the running build's mirrors/proxies/local repo/offline configuration.</li>
  * <li>Drops jars whose groupId:artifactId maven-core EXPORTS to plugin realms (read from the dist
  *     maven-core jar's {@code META-INF/maven/extension.xml}) — stock Maven excludes exported
  *     artifacts from plugin realms the same way.</li>
@@ -83,6 +96,22 @@ import org.apache.maven.plugin.MojoFailureException;
  */
 @Mojo(name = "generate-realm-spec")
 public final class GenerateRealmSpec extends AbstractMojo {
+
+    /** The HOST Maven's resolver engine — the same instance the running build resolves with. */
+    @Inject
+    RepositorySystem repoSystem;
+
+    /** The running build's session: local repo, mirrors, proxies, auth, offline — all inherited. */
+    @Parameter(defaultValue = "${repositorySystemSession}", readonly = true)
+    RepositorySystemSession repoSession;
+
+    /**
+     * The PLUGIN repositories of the project being built — what stock Maven's
+     * DefaultPluginDependenciesResolver resolves plugin realms against.
+     */
+    @Parameter(defaultValue = "${project.remotePluginRepositories}", readonly = true)
+    List<RemoteRepository> remoteRepositories;
+
     @Parameter
     Path mavenHome;
 
@@ -147,7 +176,7 @@ public final class GenerateRealmSpec extends AbstractMojo {
             Set<String> exported = exportedArtifacts(mavenHome);
             List<String> specLines = new ArrayList<>();
             for (String entry : entries) {
-                specLines.add(resolveEntry(entry, mavenHome, work, exported));
+                specLines.add(resolveEntry(entry, exported));
             }
             Files.writeString(spec, String.join("\n", specLines) + "\n", StandardCharsets.UTF_8);
             System.err.println("GenerateRealmSpec: wrote " + specLines.size() + " realm(s) to " + spec);
@@ -198,39 +227,34 @@ public final class GenerateRealmSpec extends AbstractMojo {
     }
 
     /** Resolves one {@code g:a:v[|deps]} entry to its realm jars; returns the spec line. */
-    private static String resolveEntry(String entry, Path mavenHome, Path work, Set<String> exported) throws Exception {
+    private String resolveEntry(String entry, Set<String> exported) throws Exception {
         String gav = entry.split("\\|", 2)[0];
         String depKey = entry.contains("|") ? entry.substring(entry.indexOf('|') + 1) : "";
         String[] g = gav.split(":");
         if (g.length != 3) {
             throw new IllegalArgumentException("Expected groupId:artifactId:version[|deps], got: " + entry);
         }
-        Path pom = work.resolve(g[1] + "-pom.xml");
-        Files.writeString(pom, synthesizePom(g[0], g[1], g[2], depKey), StandardCharsets.UTF_8);
-        Path cpFile = work.resolve(g[1] + ".cp");
         System.err.println(">>> Resolving runtime classpath for " + gav
                 + (depKey.isEmpty() ? "" : " (+ per-plugin deps: " + depKey + ")"));
-        buildClasspath(mavenHome, pom, cpFile);
+        List<String> resolved =
+                resolveRuntimeClasspath(new DefaultArtifact(g[0], g[1], "jar", g[2]), decodeDependencies(depKey));
 
         List<String> jars = new ArrayList<>();
         boolean kotlinEmbeddable = false;
-        for (String jar : Files.readString(cpFile).trim().split(File.pathSeparator)) {
-            if (jar.isBlank()) {
-                continue;
-            }
+        for (String jar : resolved) {
             String ga = repoLayoutGa(jar);
             if (ga != null && exported.contains(ga)) {
                 System.err.println("    excluded (provided by core): " + ga);
                 continue;
             }
             kotlinEmbeddable |= Path.of(jar).getFileName().toString().startsWith("kotlin-compiler-embeddable-");
-            jars.add(jar.trim());
+            jars.add(jar);
         }
         if (jars.isEmpty()) {
             throw new IllegalStateException("Could not resolve runtime classpath for " + gav);
         }
         if (kotlinEmbeddable) {
-            for (String serJar : resolveKotlinxSerialization(mavenHome, work)) {
+            for (String serJar : resolveKotlinxSerialization()) {
                 if (!jars.contains(serJar)) {
                     jars.add(serJar);
                     System.err.println("    + " + serJar);
@@ -240,74 +264,60 @@ public final class GenerateRealmSpec extends AbstractMojo {
         return specLine(gav, depKey, jars);
     }
 
-    /** The throwaway pom dependency:build-classpath resolves — plugin + decoded per-plugin deps. */
-    private static String synthesizePom(String groupId, String artifactId, String version, String depKey) {
-        StringBuilder deps = new StringBuilder();
-        StringBuilder mgmt = new StringBuilder();
-        if (!depKey.isEmpty()) {
-            // per-entry form: g:a:v:type:classifier:scope with ^-separated g:a exclusions appended
-            for (String dep : depKey.split(",")) {
-                String[] exclusionSplit = dep.split("\\^");
-                String[] c = exclusionSplit[0].split(":", -1);
-                StringBuilder exclusions = new StringBuilder();
-                if (exclusionSplit.length > 1) {
-                    exclusions.append("<exclusions>");
-                    for (int i = 1; i < exclusionSplit.length; i++) {
-                        String[] ex = exclusionSplit[i].split(":", -1);
-                        exclusions
-                                .append("<exclusion><groupId>")
-                                .append(ex[0])
-                                .append("</groupId><artifactId>")
-                                .append(ex[1])
-                                .append("</artifactId></exclusion>");
-                    }
-                    exclusions.append("</exclusions>");
-                }
-                String block = "    <dependency><groupId>" + c[0] + "</groupId><artifactId>" + c[1]
-                        + "</artifactId><version>" + c[2] + "</version><type>"
-                        + (c.length > 3 && !c[3].isEmpty() ? c[3] : "jar") + "</type>"
-                        + (c.length > 4 && !c[4].isEmpty() ? "<classifier>" + c[4] + "</classifier>" : "")
-                        + "<scope>" + (c.length > 5 && !c[5].isEmpty() ? c[5] : "compile") + "</scope>"
-                        + exclusions + "</dependency>\n";
-                deps.append(block);
-                // declared in BOTH places: dependencies adds jars to the realm, dependencyManagement
-                // overrides versions inside the plugin's own tree — the two effects Maven's
-                // per-plugin <dependencies> have.
-                mgmt.append(block);
-            }
+    /**
+     * One in-process resolver call replacing the forked dist {@code mvn dependency:build-classpath}
+     * of earlier iterations: the SAME CollectRequest shape stock Maven's
+     * DefaultPluginDependenciesResolver uses when it builds a plugin realm — plugin artifact as
+     * root, per-plugin dependencies direct AND managed, runtime classpath filter. The injected
+     * session inherits the running build's mirrors/proxies/auth/local repo/offline verbatim, and
+     * resolution failures surface as typed exceptions naming the missing artifact.
+     */
+    private List<String> resolveRuntimeClasspath(DefaultArtifact root, List<Dependency> extraDependencies)
+            throws Exception {
+        CollectRequest collect = new CollectRequest();
+        collect.setRoot(new Dependency(root, JavaScopes.RUNTIME));
+        collect.setRepositories(remoteRepositories);
+        for (Dependency dependency : extraDependencies) {
+            // BOTH: direct adds the jars to the realm, managed overrides versions inside the
+            // plugin's own tree — the two effects Maven's per-plugin <dependencies> have.
+            collect.addDependency(dependency);
+            collect.addManagedDependency(dependency);
         }
-        return "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n"
-                + "  <modelVersion>4.0.0</modelVersion>\n"
-                + "  <groupId>nmvn</groupId><artifactId>prebuilt-cp</artifactId><version>1</version>\n"
-                + "  <packaging>pom</packaging>\n"
-                + "  <dependencyManagement><dependencies>\n" + mgmt + "  </dependencies></dependencyManagement>\n"
-                + "  <dependencies>\n"
-                + "    <dependency><groupId>" + groupId + "</groupId><artifactId>" + artifactId
-                + "</artifactId><version>" + version + "</version></dependency>\n"
-                + deps
-                + "  </dependencies>\n"
-                + "</project>\n";
+        DependencyRequest request =
+                new DependencyRequest(collect, DependencyFilterUtils.classpathFilter(JavaScopes.RUNTIME));
+        List<String> jars = new ArrayList<>();
+        for (ArtifactResult result :
+                repoSystem.resolveDependencies(repoSession, request).getArtifactResults()) {
+            jars.add(result.getArtifact().getFile().getAbsolutePath());
+        }
+        return jars;
     }
 
-    /** Forks the DIST's mvn so user settings (mirrors, proxies, repo location) apply identically. */
-    private static void buildClasspath(Path mavenHome, Path pom, Path cpFile) throws Exception {
-        boolean windows =
-                System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
-        Path mvn = mavenHome.resolve("bin").resolve(windows ? "mvn.cmd" : "mvn");
-        Process p = new ProcessBuilder(
-                        mvn.toString(),
-                        "-q",
-                        "-f",
-                        pom.toString(),
-                        "org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath",
-                        "-Dmdep.outputFile=" + cpFile,
-                        "-DincludeScope=runtime")
-                .redirectErrorStream(true)
-                .start();
-        String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (p.waitFor() != 0 || !Files.isRegularFile(cpFile)) {
-            throw new IllegalStateException("dependency:build-classpath failed for " + pom + ":\n" + output);
+    /**
+     * The per-plugin {@code <dependencies>} decoded from the canonical key (per-entry form:
+     * {@code g:a:v:type:classifier:scope} with {@code ^}-separated {@code g:a} exclusions
+     * appended — see PrebuiltPluginRealms.dependencyKey).
+     */
+    private static List<Dependency> decodeDependencies(String depKey) {
+        List<Dependency> dependencies = new ArrayList<>();
+        if (depKey.isEmpty()) {
+            return dependencies;
         }
+        for (String dep : depKey.split(",")) {
+            String[] exclusionSplit = dep.split("\\^");
+            String[] c = exclusionSplit[0].split(":", -1);
+            List<Exclusion> exclusions = new ArrayList<>();
+            for (int i = 1; i < exclusionSplit.length; i++) {
+                String[] ex = exclusionSplit[i].split(":", -1);
+                exclusions.add(new Exclusion(ex[0], ex[1], "*", "*"));
+            }
+            String type = c.length > 3 && !c[3].isEmpty() ? c[3] : "jar";
+            String classifier = c.length > 4 ? c[4] : "";
+            String scope = c.length > 5 && !c[5].isEmpty() ? c[5] : JavaScopes.COMPILE;
+            dependencies.add(
+                    new Dependency(new DefaultArtifact(c[0], c[1], classifier, type, c[2]), scope, false, exclusions));
+        }
+        return dependencies;
     }
 
     /**
@@ -318,28 +328,18 @@ public final class GenerateRealmSpec extends AbstractMojo {
      * kotlinx-serialization-core-jvm (only that artifact — its transitive kotlin-stdlib may be
      * OLDER than the realm's and would reintroduce version mixing) keeps the bake gate green.
      */
-    private static List<String> resolveKotlinxSerialization(Path mavenHome, Path work) throws Exception {
+    private List<String> resolveKotlinxSerialization() throws Exception {
         String version = System.getenv().getOrDefault("KOTLINX_SERIALIZATION_VERSION", "1.9.0");
         System.err.println(">>> Adding kotlinx-serialization-core-jvm:" + version
                 + " (required by kotlin-compiler-embeddable bake)...");
-        Path pom = work.resolve("kotlinx-serialization-pom.xml");
-        Files.writeString(
-                pom,
-                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n"
-                        + "  <modelVersion>4.0.0</modelVersion>\n"
-                        + "  <groupId>nmvn</groupId><artifactId>prebuilt-ser</artifactId><version>1</version>\n"
-                        + "  <packaging>pom</packaging>\n"
-                        + "  <dependencies><dependency><groupId>org.jetbrains.kotlinx</groupId>"
-                        + "<artifactId>kotlinx-serialization-core-jvm</artifactId><version>" + version
-                        + "</version></dependency></dependencies>\n"
-                        + "</project>\n",
-                StandardCharsets.UTF_8);
-        Path cpFile = work.resolve("kotlinx-serialization.cp");
-        buildClasspath(mavenHome, pom, cpFile);
         List<String> jars = new ArrayList<>();
-        for (String jar : Files.readString(cpFile).trim().split(File.pathSeparator)) {
+        for (String jar : resolveRuntimeClasspath(
+                new DefaultArtifact("org.jetbrains.kotlinx", "kotlinx-serialization-core-jvm", "jar", version),
+                List.of())) {
+            // only the serialization artifacts — not the transitive kotlin-stdlib, which may be
+            // OLDER than the realm's and would reintroduce version mixing
             if (jar.contains("kotlinx-serialization")) {
-                jars.add(jar.trim());
+                jars.add(jar);
             }
         }
         return jars;
