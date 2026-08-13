@@ -596,6 +596,21 @@ SIDECAR_JAR="$NMVN_WORK_DIR/nmvn-sidecar.jar"
 cp "$ROOT_DIR"/native/prebuilt-feature/target/prebuilt-feature-4.1.0*.jar "$SIDECAR_JAR"
 cp_append "$SIDECAR_JAR"
 
+# jvm-channel (in-process HotSpot JVM for non-baked plugins — JVM fallback). Sidecar dependency,
+# released on Maven Central; the sidecar Maven build above already resolved it into the local
+# repo. Version MUST match prebuilt-feature/pom.xml. Its
+# META-INF/native-image/native-image.properties self-registers the ChannelFeature, so being on
+# the image classpath is all the wiring it needs.
+JVM_CHANNEL_VERSION="${NMVN_JVM_CHANNEL_VERSION:-1.1}"
+JVM_CHANNEL_JAR="${NMVN_JVM_CHANNEL_JAR:-$HOME/.m2/repository/org/apidesign/graalvm/jvm-channel/$JVM_CHANNEL_VERSION/jvm-channel-$JVM_CHANNEL_VERSION.jar}"
+if [ ! -f "$JVM_CHANNEL_JAR" ]; then
+  echo "Error: jvm-channel jar not found at $JVM_CHANNEL_JAR"
+  echo "It should have been resolved by the sidecar Maven build — check that the version here"
+  echo "matches native/prebuilt-feature/pom.xml, or point NMVN_JVM_CHANNEL_JAR at the jar."
+  exit 1
+fi
+cp_append "$JVM_CHANNEL_JAR"
+
 # copy launcher JAR produced by Maven build
 LAUNCHER_JAR="$NMVN_WORK_DIR/nmvn-launcher.jar"
 cp "$ROOT_DIR"/native/launcher/target/launcher-4.1.0*.jar "$LAUNCHER_JAR"
@@ -711,40 +726,14 @@ NATIVE_IMAGE_ARGS=(
   #   startup:         65 ms vs 62 ms --version                 (no difference)
   # Drop this line first if users' build time matters more than image size.
   # -Os
-  --no-fallback
+  # STATIC FLAGS LIVE IN THE SIDECAR JAR, not here: everything owned by the sidecar/launcher code
+  # (--no-fallback, ParseRuntimeOptions, ClassForNameRespectsClassLoader, IncludeResources,
+  # jdk.compiler add-exports/opens, initialize-at-{build,run}-time, --features, and the rationale
+  # comments for all of them) is auto-applied from
+  #   native/prebuilt-feature/src/main/resources/META-INF/native-image/org.apache.maven/nmvn-sidecar/native-image.properties
+  # because the sidecar jar is on the image classpath. This block keeps only what is
+  # per-invocation or variant-specific.
   -H:+UnlockExperimentalVMOptions
-  # SVM by default parses and CONSUMES -D/-XX/-Xm* arguments at VM startup, stripping them from
-  # the argv Maven sees — a bare `-DskipTests` became system property skipTests="" and Maven's
-  # own "bare -D means true" CLI semantics never applied. Disable it so every argument reaches
-  # Maven's CLI parsing; NmvnLauncher mirrors -D args into system properties (the part of SVM's
-  # behavior launchers actually relied on — maven.home is required as a system property).
-  -H:-ParseRuntimeOptions
-  # THE flag that makes baked realms work without Crema, and the one thing dropping
-  # -H:+RuntimeClassLoading silently takes away with it.
-  #
-  # RuntimeClassLoading's onValueUpdate forces +ClassForNameRespectsClassLoader (see
-  # RuntimeClassLoading.Options in SVM), and that option DEFAULTS TO FALSE. With it false,
-  # SVM resolves Class.forName AND getResource(s) through ONE GLOBAL NAMESPACE, ignoring the
-  # class loader argument entirely: ClassRegistries.getRegistry returns the shared bootRegistry
-  # for every loader. The whole prebuilt design is per-realm class identity, so a flat namespace
-  # makes any name present in more than one realm resolve to an arbitrary winner. Observed with
-  # this exact catalog: maven-war-plugin's realm carries maven-resolver-named-locks 1.9.24 next
-  # to core's 2.0.18, core's sisu index scan then sees the REALM's META-INF/sisu/javax.inject.Named
-  # and binds the realm's FileLockNamedLockFactory into plexus.core, which dies with
-  # "FileLockNamedLockFactory cannot be cast to NamedLockFactory". Which failure you get depends
-  # on which plugins are baked (with all ten it instead surfaced as a null Injector inside sisu's
-  # AbstractDeferredClass, from the same flat-namespace collision on org.eclipse.sisu classes:
-  # war ships sisu 0.9.0.M4 and site 0.9.0.M3 alongside core's 1.0.1).
-  #
-  # Not needed under crema only because RuntimeClassLoading turns it on implicitly. The other two
-  # implications of that flag are NOT carried over: -ClosedTypeWorld and -SupportPredefinedClasses
-  # exist to support DEFINING classes at run time, which this variant deliberately cannot do.
-  -H:+ClassForNameRespectsClassLoader
-  -H:+ReportExceptionStackTraces
-  -H:+AllowJRTFileSystem
-  -H:EnableURLProtocols=jar
-  -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
-  -H:IncludeResources='org/apache/maven/plugins/clean/.*'
   # Variant-specific metadata set (reflection-crema/ is the crema script's counterpart). Beyond
   # the shared jline FFM downcalls, this registers the JDK dynamic proxies guice creates to break
   # circular dependencies in maven-core (e.g. MavenPluginManager). Crema defines proxy classes at
@@ -795,27 +784,6 @@ NATIVE_IMAGE_ARGS=(
   #     apache-maven/target/apache-maven-*/bin/mvn -B <goals>   # on a representative project
   # Realm (plugin) classes need no entries here — PrebuiltReflectionFeature registers them from
   # the build-time realms; JSON could not resolve those names anyway.
-  --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED
-  --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
-  --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
-  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,nmvn.PrebuiltPluginRealms$SelfFirstRealm,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool'
-  # The whole jline ffm PACKAGE, not just CLibrary: nested types are separate classes, so naming the
-  # outer class leaves CLibrary$termios build-time-initialized (SVM initializes JDK classes at build
-  # time by default) — and on Windows its <clinit> throws "Unsupported system!" because the FFM
-  # struct layout it computes is POSIX-only. Deferring the package covers termios/winsize and any
-  # sibling that would trip next; at run time jline probes providers and falls back, exactly as it
-  # does on HotSpot Windows today.
-  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm,jdk.internal.jrtfs.SystemImage
-  --features=nmvn.PrebuiltReflectionFeature
   nmvn.launcher.NmvnLauncher
   "$(to_cp_path "$NMVN_OUT_DIR/nmvn-native")"
 )

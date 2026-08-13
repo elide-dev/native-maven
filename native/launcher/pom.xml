@@ -163,4 +163,181 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <!-- Native image build via native-build-tools (migration away from build-scripts/).
+         Flag layering: INVARIANT flags ride in the sidecar jar's META-INF native-image.properties;
+         PARAMETERIZED flags are literal buildArgs below; the COMPUTED image classpath (dist glob)
+         is produced by sanitize-maven-plugin:generate-realm-spec into the @argfile.
+
+         Usage (dist must be built first — the image classpath is the dist's boot/ + lib/):
+           mvn -Pnative package -pl native/launcher -am -DskipTests \
+             -Dnmvn.plugins="g:a:v,g:a:v,..."          (or -Dnmvn.pluginsFile=path; entries with
+                                                        per-plugin |deps keys: whitespace-separated)
+         Output: target/${nmvn.imageName}. No plugins → baseline image (JVM fallback serves goals).
+         Variants: -Pnative alone = non-crema; -Pnative,crema = Crema (see the crema profile).
+         Not yet covered vs the script: PGO, -Os. -->
+    <profile>
+      <id>native</id>
+      <properties>
+        <nmvn.plugins />
+        <nmvn.pluginsFile />
+        <nmvn.imageName>nmvn-native</nmvn.imageName>
+        <nmvn.maxRamPercentage>80.0</nmvn.maxRamPercentage>
+        <nmvn.mavenHome>${maven.multiModuleProjectDirectory}/apache-maven/target/apache-maven-${project.version}</nmvn.mavenHome>
+        <nmvn.configDir>${maven.multiModuleProjectDirectory}/reflection-non-crema</nmvn.configDir>
+      </properties>
+      <build>
+        <plugins>
+          <!--
+            exposes ${org.apache.maven:prebuilt-feature:jar},
+            ${org.apidesign.graalvm:jvm-channel:jar}
+            for the sanitize Maven plugin
+            below
+          -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>artifact-path-properties</id>
+                <goals>
+                  <goal>properties</goal>
+                </goals>
+                <phase>initialize</phase>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>sanitize-maven-plugin</artifactId>
+            <version>${project.version}</version>
+            <executions>
+              <execution>
+                <id>generate-realm-spec</id>
+                <goals>
+                  <goal>generate-realm-spec</goal>
+                </goals>
+                <phase>prepare-package</phase>
+                <configuration>
+                  <mavenHome>${nmvn.mavenHome}</mavenHome>
+                  <work>${project.build.directory}/nmvn</work>
+                  <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
+                  <extraCp>
+                    <!-- should use dependencies rather than JARs -->
+                    <argument>${org.apache.maven:prebuilt-feature:jar}</argument>
+                    <argument>${org.apidesign.graalvm:jvm-channel:jar}</argument>
+                  </extraCp>
+                  <plugins>
+                    <argument>${nmvn.plugins}</argument>
+                  </plugins>
+                  <pluginsFile>${nmvn.pluginsFile}</pluginsFile>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <imageName>${nmvn.imageName}</imageName>
+              <mainClass>nmvn.launcher.NmvnLauncher</mainClass>
+              <!-- Pass args DIRECTLY on every platform. On Windows NBT otherwise wraps all args
+                   into its own argfile, and the native-image driver does not expand an @file
+                   reference NESTED inside another argfile — our @nmvn/native-image.args then
+                   reaches the driver as a literal token and is mistaken for the main class.
+                   Direct passing is safe from cmd.exe's 8191-char limit because the only long
+                   argument (the image classpath) lives inside our own argfile — the same
+                   short-command+@argfile pattern the bash scripts used on Windows. -->
+              <useArgFile>false</useArgFile>
+              <!-- ONLY the launcher classes; the dist-exact rest (boot/ + lib/ + sidecar +
+                   jvm-channel) rides in the argfile's -cp — the driver merges both. This
+                   deliberately bypasses NBT's module-dependency classpath: the dist is the
+                   curated ground truth of what runtime Maven ships, and resolving the module
+                   graph instead risks silent skew. -->
+              <classpath>
+                <param>${project.build.outputDirectory}</param>
+              </classpath>
+              <buildArgs>
+                <!-- the argfile holds ONLY the dist-exact image classpath (a build-time glob a
+                     pom cannot express); spec.txt/unlinkable.txt exist even when nothing is baked
+                     (written empty — PrebuiltPluginRealms reads a blank spec as registry-empty) -->
+                <buildArg>@${project.build.directory}/nmvn/native-image.args</buildArg>
+                <buildArg>-J-XX:MaxRAMPercentage=${nmvn.maxRamPercentage}</buildArg>
+                <buildArg>-Dguice_bytecode_gen_option=DISABLED</buildArg>
+                <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                <buildArg>-H:ConfigurationFileDirectories=${nmvn.configDir}</buildArg>
+                <buildArg>-Dnmvn.prebuilt.pluginsFile=${project.build.directory}/nmvn/spec.txt</buildArg>
+                <buildArg>-Dnmvn.prebuilt.unlinkable=${project.build.directory}/nmvn/unlinkable.txt</buildArg>
+              </buildArgs>
+            </configuration>
+            <executions>
+              <execution>
+                <id>build-native</id>
+                <goals>
+                  <goal>compile-no-fork</goal>
+                </goals>
+                <phase>package</phase>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <!-- MODIFIER profile — always together with native: mvn -Pnative,crema package ...
+         Carries only the deltas vs the base native profile; everything shared (prep mojo, NBT
+         config, static sidecar flags) comes from -Pnative. Needs a Crema-enabled GraalVM
+         (development builds: -H:+RuntimeClassLoading is not in stock releases). -->
+    <profile>
+      <id>crema</id>
+      <properties>
+        <!-- crema metadata set: no guice-proxy JSON (Crema defines proxies at run time) and no
+             predefined classes (RuntimeClassLoading covers runtime-defined classes) -->
+        <nmvn.configDir>${maven.multiModuleProjectDirectory}/reflection-crema</nmvn.configDir>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <buildArgs combine.children="append">
+                <buildArg>-H:+RuntimeClassLoading</buildArg>
+                <buildArg>-H:+GraalJITCompileAtRuntime</buildArg>
+                <!-- Crema's runtime class loading serves non-baked plugins natively; delegating
+                     them to a HotSpot JVM would bypass the very path this variant exercises.
+                     Baked by PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT (build-time init);
+                     runtime -Dnmvn.jvm.fallback=true re-enables per invocation. -->
+                <buildArg>-Dnmvn.jvm.fallback.default=false</buildArg>
+                <!-- Blanket preserves: runtime-loaded plugin classes reflect over core/JDK types
+                     on paths no build-time analysis can see, so the crema variant keeps the
+                     keep-everything registration the non-crema variant replaced with precise
+                     agent metadata (see the size discussion in the non-crema script history). -->
+                <buildArg>-H:Preserve=module=java.base</buildArg>
+                <buildArg>-H:Preserve=module=java.logging</buildArg>
+                <buildArg>-H:Preserve=module=java.xml</buildArg>
+                <buildArg>-H:Preserve=module=java.desktop</buildArg>
+                <buildArg>-H:Preserve=module=java.compiler</buildArg>
+                <buildArg>-H:Preserve=module=jdk.compiler</buildArg>
+                <buildArg>-H:Preserve=module=jdk.unsupported</buildArg>
+                <buildArg>-H:Preserve=package=org.apache.maven.*</buildArg>
+                <buildArg>-H:Preserve=package=com.ctc.wstx.*</buildArg>
+                <buildArg>-H:Preserve=package=org.apache.commons.logging.impl.*</buildArg>
+                <buildArg>-H:Preserve=package=org.eclipse.aether.*</buildArg>
+                <buildArg>-H:Preserve=package=org.slf4j.*</buildArg>
+                <buildArg>-H:Preserve=package=org.codehaus.plexus.*</buildArg>
+                <buildArg>-H:Preserve=package=nmvn.*</buildArg>
+                <buildArg>-H:Preserve=package=com.google.inject.*</buildArg>
+                <buildArg>-H:Preserve=package=com.google.common.*</buildArg>
+                <buildArg>-H:Preserve=package=org.eclipse.sisu.*</buildArg>
+                <buildArg>-H:Preserve=package=org.sonatype.*</buildArg>
+                <buildArg>-H:Preserve=package=org.fusesource.*</buildArg>
+                <buildArg>-H:Preserve=package=org.jline.*</buildArg>
+                <buildArg>-H:Preserve=package=javax.inject.*</buildArg>
+              </buildArgs>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

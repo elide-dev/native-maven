@@ -6,17 +6,26 @@
     <artifactId>native</artifactId>
     <version>4.1.0-SNAPSHOT</version>
   </parent>
-  <artifactId>sanitize</artifactId>
-  <packaging>jar</packaging>
+  <artifactId>sanitize-maven-plugin</artifactId>
+  <packaging>maven-plugin</packaging>
   <properties>
     <!-- SanitizeRealmJars is using API from version 25 -->
     <minimalJavaBuildVersion>25</minimalJavaBuildVersion>
     <maven.compiler.release>${minimalJavaBuildVersion}</maven.compiler.release>
   </properties>
   <dependencies>
+    <!-- provided: the HOST Maven supplies all of this at mojo runtime. Compile scope would ship
+         a second, reactor-fresh Maven inside the plugin realm, mixing with the (possibly older)
+         host dist's classes — observed as NoClassDefFoundError on maven-internal classes. -->
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-cli</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>javax.inject</groupId>
+      <artifactId>javax.inject</artifactId>
+      <scope>provided</scope>
     </dependency>
   </dependencies>
 </project>

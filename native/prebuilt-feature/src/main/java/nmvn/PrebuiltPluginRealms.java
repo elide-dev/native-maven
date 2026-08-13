@@ -317,6 +317,17 @@ public final class PrebuiltPluginRealms {
     private static final boolean STRICT_CLOSURE = Boolean.getBoolean("nmvn.prebuilt.strictClosure");
 
     /**
+     * Per-VARIANT default for the HotSpot JVM fallback, captured from the image BUILDER's
+     * {@code -Dnmvn.jvm.fallback.default} (this class is initialize-at-build-time, so the builder
+     * property is what the field snapshot sees). The crema build script bakes {@code false}:
+     * runtime class loading serves non-baked plugins natively there, and delegating to a HotSpot
+     * JVM would silently bypass the very path that variant exists to exercise. The runtime flag
+     * {@code -Dnmvn.jvm.fallback=true|false} overrides the baked default either way.
+     */
+    public static final boolean JVM_FALLBACK_DEFAULT =
+            Boolean.parseBoolean(System.getProperty("nmvn.jvm.fallback.default", "true"));
+
+    /**
      * The {@code <exportedPackage>} entries of every {@code META-INF/maven/extension.xml} on the image
      * classpath — i.e. maven-core's (plus any core extension's). These are the packages whose class
      * identity is shared between the core realm and every plugin realm; see the import loop in

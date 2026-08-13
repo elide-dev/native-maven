@@ -15,6 +15,15 @@
     <module>launcher</module>
   </modules>
   <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.graalvm.buildtools</groupId>
+          <artifactId>native-maven-plugin</artifactId>
+          <version>1.1.8</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
     <plugins>
       <!-- Disabling Apache plugins that aren't essential for code execution.
             We don't have the same licenses (yet) and we don't need Apache check
@@ -30,6 +39,16 @@
       <plugin>
         <groupId>org.apache.rat</groupId>
         <artifactId>apache-rat-plugin</artifactId>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+      <!-- The bytecode-version rule bans jvm-channel (compiled for the GraalVM JDK these native
+           modules require anyway); these modules are not part of the Maven dist, so the dist
+           compatibility rules don't apply to them. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
         <configuration>
           <skip>true</skip>
         </configuration>

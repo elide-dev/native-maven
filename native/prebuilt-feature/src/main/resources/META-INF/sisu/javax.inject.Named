@@ -1,2 +1,3 @@
 nmvn.PrebuiltPluginDescriptorCache
 nmvn.PrebuiltPluginRealmCache
+nmvn.JvmFallbackBuildPluginManager

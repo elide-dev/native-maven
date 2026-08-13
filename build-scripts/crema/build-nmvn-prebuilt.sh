@@ -758,21 +758,23 @@ NATIVE_IMAGE_ARGS=(
   -classpath "$CLASSPATH"
   ${PREBUILT_ARGS[@]+"${PREBUILT_ARGS[@]}"}
   -Dguice_bytecode_gen_option=DISABLED
-  --no-fallback
+  # STATIC FLAGS LIVE IN THE SIDECAR JAR, not here: everything owned by the sidecar/launcher code
+  # (--no-fallback, ParseRuntimeOptions, ClassForNameRespectsClassLoader, IncludeResources,
+  # jdk.compiler add-exports/opens, initialize-at-{build,run}-time, --features, and the rationale
+  # comments for all of them) is auto-applied from
+  #   native/prebuilt-feature/src/main/resources/META-INF/native-image/org.apache.maven/nmvn-sidecar/native-image.properties
+  # because the sidecar jar is on the image classpath. This block keeps only what is
+  # per-invocation or variant-specific.
+  #
+  # The JVM fallback (delegating non-baked plugin goals to an in-process HotSpot) defaults OFF in
+  # this variant: Crema's runtime class loading serves non-baked plugins natively, and delegating
+  # would silently bypass the very path this variant exists to exercise. Captured at build time by
+  # PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT (initialize-at-build-time); runtime
+  # -Dnmvn.jvm.fallback=true re-enables per invocation.
+  -Dnmvn.jvm.fallback.default=false
   -H:+UnlockExperimentalVMOptions
-  # SVM by default parses and CONSUMES -D/-XX/-Xm* arguments at VM startup, stripping them from
-  # the argv Maven sees — a bare `-DskipTests` became system property skipTests="" and Maven's
-  # own "bare -D means true" CLI semantics never applied. Disable it so every argument reaches
-  # Maven's CLI parsing; NmvnLauncher mirrors -D args into system properties (the part of SVM's
-  # behavior launchers actually relied on — maven.home is required as a system property).
-  -H:-ParseRuntimeOptions
-  -H:+ReportExceptionStackTraces
-  -H:+AllowJRTFileSystem
   -H:+RuntimeClassLoading
   -H:+GraalJITCompileAtRuntime
-  -H:EnableURLProtocols=jar
-  -H:IncludeResources='META-INF/(maven|sisu|services|plexus)/.*'
-  -H:IncludeResources='org/apache/maven/plugins/clean/.*'
   # Variant-specific metadata set: reflection-crema/ for this script, reflection-non-crema/ for
   # the non-crema one (which additionally registers guice's circular-dependency JDK proxies —
   # not needed here, Crema defines proxy classes at run time).
@@ -798,27 +800,6 @@ NATIVE_IMAGE_ARGS=(
   -H:Preserve=package=org.jline.*
   -H:Preserve=package=javax.inject.*
   -H:Preserve=module=jdk.unsupported
-  --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED
-  --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED
-  --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
-  --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
-  '--initialize-at-build-time=nmvn.PrebuiltPluginRealms,nmvn.PrebuiltPluginRealms$Prebuilt,nmvn.PrebuiltPluginRealms$BakedClassLoader,nmvn.PrebuiltPluginRealms$SelfFirstRealm,org.apache.maven.plugin.descriptor,org.apache.maven.artifact,org.codehaus.plexus.component.repository,org.codehaus.plexus.configuration,org.codehaus.plexus.classworlds,org.apache.maven.internal.xml,com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.util,com.ctc.wstx.api,org.apache.maven.api.xml,org.slf4j,org.apache.maven.slf4j,org.apache.maven.logging,com.sun.tools.javac.api.JavacTool'
-  # The whole jline ffm PACKAGE, not just CLibrary: nested types are separate classes, so naming the
-  # outer class leaves CLibrary$termios build-time-initialized (SVM initializes JDK classes at build
-  # time by default) — and on Windows its <clinit> throws "Unsupported system!" because the FFM
-  # struct layout it computes is POSIX-only. Deferring the package covers termios/winsize and any
-  # sibling that would trip next; at run time jline probes providers and falls back, exactly as it
-  # does on HotSpot Windows today.
-  --initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm,jdk.internal.jrtfs.SystemImage
-  --features=nmvn.PrebuiltReflectionFeature
   nmvn.launcher.NmvnLauncher
   "$(to_cp_path "$NMVN_OUT_DIR/nmvn-native")"
 )
