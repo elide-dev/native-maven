@@ -120,7 +120,9 @@ public final class GenerateRealmSpec extends AbstractMojo {
     private void executeImpl() throws Exception {
         var pluginsInput = new StringBuilder();
         for (var arg : plugins) {
-            pluginsInput.append('\n').append(arg);
+            if (arg != null) {
+                pluginsInput.append('\n').append(arg);
+            }
         }
         if (pluginsFile != null) {
             if (Files.isRegularFile(pluginsFile)) {
