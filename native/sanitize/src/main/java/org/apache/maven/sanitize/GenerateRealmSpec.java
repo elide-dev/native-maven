@@ -53,28 +53,27 @@ import java.util.zip.ZipEntry;
  *     LF-terminated) with the same validation the bash/python pipeline performs.</li>
  * <li>Forks the {@link SanitizeRealmJars} JVM (attribute strip + JVMCI link probe) over the spec,
  *     which rewrites it in place and produces {@code unlinkable.txt}.</li>
- * <li>Writes a native-image @argfile with the DYNAMIC arguments: the dist-exact image classpath
- *     ({@code boot/*.jar} + {@code lib/*.jar} + the extra jars passed in), the
- *     {@code -Dnmvn.prebuilt.*} inputs, builder heap, and the variant's metadata directory. The
- *     native-maven-plugin passes just {@code @thisfile} in {@code buildArgs}, keeping the pom
- *     static.</li>
+ * <li>Writes a native-image @argfile with the ONE argument a pom cannot express: the dist-exact
+ *     image classpath ({@code boot/*.jar} + {@code lib/*.jar} + the extra jars passed in),
+ *     enumerated at build time. All other per-invocation flags are literal {@code <buildArg>}
+ *     entries in the launcher's native profile.</li>
  * </ol>
  *
  * <p>Usage (all flags may repeat where noted):
  * <pre>
  *   --maven-home &lt;dist dir&gt;         required
- *   --work &lt;dir&gt;                    required, scratch + outputs
- *   --argfile &lt;path&gt;                required, native-image argfile to write
- *   --config-dir &lt;dir&gt;              required, -H:ConfigurationFileDirectories value
+ *   --work &lt;dir&gt;                    required, scratch + outputs (spec.txt, unlinkable.txt, ...)
+ *   --argfile &lt;path&gt;                required, image-classpath argfile to write
  *   --extra-cp &lt;path&gt;               repeatable: sidecar jar, jvm-channel jar, ... (image classpath)
  *   --plugins &lt;entries&gt;             optional; entries separated by whitespace/newlines, commas
  *                                     also accepted when no entry carries a '|' dependency key
  *   --plugins-file &lt;path&gt;           optional; newline-separated entries
- *   --max-ram-percentage &lt;value&gt;    builder heap, default 80.0
  * </pre>
  *
- * <p>With no plugins at all the spec/sanitize steps are skipped (baseline image, parity with the
- * script's no-args mode) and the argfile carries no {@code -Dnmvn.prebuilt.*} entries.
+ * <p>With no plugins at all the resolution/sanitize steps are skipped (baseline image, parity with
+ * the script's no-args mode); {@code spec.txt} and {@code unlinkable.txt} are still written, EMPTY,
+ * because the pom references them unconditionally and PrebuiltPluginRealms reads a blank spec as
+ * "registry empty".
  */
 public final class GenerateRealmSpec {
 
@@ -82,16 +81,13 @@ public final class GenerateRealmSpec {
         Path mavenHome = null;
         Path work = null;
         Path argfile = null;
-        Path configDir = null;
         List<Path> extraCp = new ArrayList<>();
         StringBuilder pluginsInput = new StringBuilder();
-        String maxRamPercentage = "80.0";
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--maven-home" -> mavenHome = Path.of(args[++i]);
                 case "--work" -> work = Path.of(args[++i]);
                 case "--argfile" -> argfile = Path.of(args[++i]);
-                case "--config-dir" -> configDir = Path.of(args[++i]);
                 case "--extra-cp" -> extraCp.add(Path.of(args[++i]));
                 case "--plugins" -> pluginsInput.append('\n').append(args[++i]);
                 case "--plugins-file" -> {
@@ -100,12 +96,11 @@ public final class GenerateRealmSpec {
                         pluginsInput.append('\n').append(Files.readString(f));
                     }
                 }
-                case "--max-ram-percentage" -> maxRamPercentage = args[++i];
                 default -> throw new IllegalArgumentException("Unknown flag: " + args[i]);
             }
         }
-        if (mavenHome == null || work == null || argfile == null || configDir == null) {
-            throw new IllegalArgumentException("--maven-home, --work, --argfile and --config-dir are required");
+        if (mavenHome == null || work == null || argfile == null) {
+            throw new IllegalArgumentException("--maven-home, --work and --argfile are required");
         }
         if (!Files.isDirectory(mavenHome.resolve("lib"))) {
             throw new IllegalStateException("Not a Maven dist (no lib/): " + mavenHome
@@ -114,8 +109,13 @@ public final class GenerateRealmSpec {
         Files.createDirectories(work);
 
         List<String> entries = splitPluginEntries(pluginsInput.toString());
+        // Both files are ALWAYS written, even with nothing to bake: the pom passes their paths as
+        // static -Dnmvn.prebuilt.* buildArgs, and PrebuiltPluginRealms treats a BLANK spec as
+        // "registry empty" (and an empty unlinkable list as no drops) — the baseline image.
         Path spec = work.resolve("spec.txt");
         Path unlinkable = work.resolve("unlinkable.txt");
+        Files.writeString(spec, "", StandardCharsets.UTF_8);
+        Files.writeString(unlinkable, "", StandardCharsets.UTF_8);
         if (entries.isEmpty()) {
             System.err.println("GenerateRealmSpec: WARNING — no plugins to bake; the image can run"
                     + " pluginless commands natively, everything else goes to the JVM fallback.");
@@ -129,13 +129,8 @@ public final class GenerateRealmSpec {
             System.err.println("GenerateRealmSpec: wrote " + specLines.size() + " realm(s) to " + spec);
             runSanitize(imageClasspath(mavenHome, extraCp), spec, work, unlinkable);
         }
-        writeArgfile(
-                argfile,
-                imageClasspath(mavenHome, extraCp),
-                configDir,
-                maxRamPercentage,
-                entries.isEmpty() ? null : new Path[] {spec, unlinkable});
-        System.err.println("GenerateRealmSpec: wrote native-image argfile " + argfile);
+        writeArgfile(argfile, imageClasspath(mavenHome, extraCp));
+        System.err.println("GenerateRealmSpec: wrote image-classpath argfile " + argfile);
     }
 
     /**
@@ -413,26 +408,15 @@ public final class GenerateRealmSpec {
     }
 
     /**
-     * The native-image @argfile with everything dynamic: classpath, builder heap, prebuilt inputs,
-     * metadata dir. Static flags come from the sidecar jar's META-INF native-image.properties;
-     * main class and image name from the native-maven-plugin configuration.
+     * The native-image @argfile now carries ONLY the image classpath — the one argument a pom
+     * cannot express (a build-time enumeration of the dist's boot/ and lib/ jars). Every other
+     * flag is a literal {@code <buildArg>} in the launcher's native profile, the static set rides
+     * in the sidecar jar's META-INF native-image.properties, and main class / image name come
+     * from the native-maven-plugin configuration.
      */
-    private static void writeArgfile(
-            Path argfile, List<String> imageClasspath, Path configDir, String maxRamPercentage, Path[] prebuilt)
-            throws Exception {
-        List<String> args = new ArrayList<>(List.of(
-                "-J-XX:MaxRAMPercentage=" + maxRamPercentage,
-                "-cp",
-                String.join(File.pathSeparator, imageClasspath),
-                "-Dguice_bytecode_gen_option=DISABLED",
-                "-H:+UnlockExperimentalVMOptions",
-                "-H:ConfigurationFileDirectories=" + configDir.toAbsolutePath()));
-        if (prebuilt != null) {
-            args.add("-Dnmvn.prebuilt.pluginsFile=" + prebuilt[0].toAbsolutePath());
-            args.add("-Dnmvn.prebuilt.unlinkable=" + prebuilt[1].toAbsolutePath());
-        }
+    private static void writeArgfile(Path argfile, List<String> imageClasspath) throws Exception {
         StringBuilder content = new StringBuilder();
-        for (String arg : args) {
+        for (String arg : new String[] {"-cp", String.join(File.pathSeparator, imageClasspath)}) {
             // same quoting as the script's write_argfile: quote anything with whitespace/quotes/#
             if (arg.isEmpty() || arg.matches(".*[\\s\"'].*") || arg.startsWith("#")) {
                 arg = "\"" + arg.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";

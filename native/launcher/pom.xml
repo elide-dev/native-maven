@@ -236,8 +236,6 @@
                     <argument>${project.build.directory}/nmvn</argument>
                     <argument>--argfile</argument>
                     <argument>${project.build.directory}/nmvn/native-image.args</argument>
-                    <argument>--config-dir</argument>
-                    <argument>${nmvn.configDir}</argument>
                     <argument>--extra-cp</argument>
                     <argument>${org.apache.maven:prebuilt-feature:jar}</argument>
                     <argument>--extra-cp</argument>
@@ -246,8 +244,6 @@
                     <argument>${nmvn.plugins}</argument>
                     <argument>--plugins-file</argument>
                     <argument>${nmvn.pluginsFile}</argument>
-                    <argument>--max-ram-percentage</argument>
-                    <argument>${nmvn.maxRamPercentage}</argument>
                   </arguments>
                 </configuration>
               </execution>
@@ -269,7 +265,16 @@
                 <param>${project.build.outputDirectory}</param>
               </classpath>
               <buildArgs>
+                <!-- the argfile holds ONLY the dist-exact image classpath (a build-time glob a
+                     pom cannot express); spec.txt/unlinkable.txt exist even when nothing is baked
+                     (written empty — PrebuiltPluginRealms reads a blank spec as registry-empty) -->
                 <buildArg>@${project.build.directory}/nmvn/native-image.args</buildArg>
+                <buildArg>-J-XX:MaxRAMPercentage=${nmvn.maxRamPercentage}</buildArg>
+                <buildArg>-Dguice_bytecode_gen_option=DISABLED</buildArg>
+                <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                <buildArg>-H:ConfigurationFileDirectories=${nmvn.configDir}</buildArg>
+                <buildArg>-Dnmvn.prebuilt.pluginsFile=${project.build.directory}/nmvn/spec.txt</buildArg>
+                <buildArg>-Dnmvn.prebuilt.unlinkable=${project.build.directory}/nmvn/unlinkable.txt</buildArg>
               </buildArgs>
             </configuration>
             <executions>
