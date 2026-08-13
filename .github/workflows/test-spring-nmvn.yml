@@ -151,16 +151,43 @@ jobs:
       - name: Build ${{ matrix.variant }} image for Boot ${{ matrix.boot }}
         run: |
           set -euo pipefail
-          chmod +x catalog/resolve_boot_catalog.py build-scripts/build-nmvn-catalog.sh \
-            "build-scripts/${{ matrix.variant }}/build-nmvn-prebuilt.sh"
+          chmod +x catalog/resolve_boot_catalog.py ./mvnw
 
           rm -rf build
           ./catalog/resolve_boot_catalog.py \
             --boot-version "${{ matrix.boot }}" \
             --language java
 
-          NMVN_VARIANT="${{ matrix.variant }}" \
-            ./build-scripts/build-nmvn-catalog.sh "build/catalogs/nmvn-spring-${{ matrix.boot }}.json"
+          # Variant → Maven profiles; the image build is the launcher's native profile
+          # (build-scripts/ are no longer involved).
+          PROFILES="native"
+          [ "${{ matrix.variant }}" = "crema" ] && PROFILES="native,crema"
+
+          # ABSOLUTE paths only: Maven resolves relative Path mojo parameters against the MODULE
+          # basedir (native/launcher), not the invocation dir. Dist dir by glob: this workflow
+          # strips -SNAPSHOT from the poms, so the profile's ${project.version}-derived default
+          # would miss; Windows java needs a C:/ style path (cygpath -m).
+          REPO_ROOT="$PWD"
+          if command -v cygpath >/dev/null 2>&1; then
+            REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+          fi
+          MAVEN_DIST=""
+          for d in apache-maven/target/apache-maven-*; do
+            [ -d "$d/lib" ] && MAVEN_DIST="$REPO_ROOT/$d" && break
+          done
+
+          NAME="nmvn-spring-${{ matrix.boot }}"
+          ./mvnw -P"$PROFILES" package -pl native/launcher -am -B -DskipTests \
+            -Dnmvn.pluginsFile="$REPO_ROOT/build/catalogs/${NAME}.plugins" \
+            -Dnmvn.imageName="${NAME}" \
+            -Dnmvn.mavenHome="$MAVEN_DIST"
+
+          # The image lands in the module's target dir; later steps expect build/.
+          if [ -f "native/launcher/target/${NAME}.exe" ]; then
+            mv "native/launcher/target/${NAME}.exe" build/
+          else
+            mv "native/launcher/target/${NAME}" build/
+          fi
 
           BIN="build/nmvn-spring-${{ matrix.boot }}"
           if [ -f "${BIN}.exe" ]; then

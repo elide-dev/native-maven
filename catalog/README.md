@@ -12,11 +12,10 @@
   build/catalogs/nmvn-spring-<boot>.json
               │
               ▼
-  build-scripts/build-nmvn-catalog.sh  →  build-scripts/<variant>/build-nmvn-prebuilt.sh
+  mvnw -Pnative[,crema] package -pl native/launcher -am -Dnmvn.pluginsFile=<.plugins> ...
               │
               ▼
-  build/nmvn-spring-<boot>
-  build/work/          (scratch)
+  native/launcher/target/nmvn-spring-<boot>
 ```
 
 **Maven dist stays in** `apache-maven/target/` (not under `build/`).
@@ -52,10 +51,11 @@
 # → build/catalogs/nmvn-spring-4.1.0.json
 # → build/work/catalog-probe-…  (scratch)
 
-./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json --dry-run
-./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
-# → build/nmvn-spring-4.1.0
-# → build/nmvn-spring-4.1.0.plugins
+./mvnw -Pnative package -pl native/launcher -am -DskipTests \\
+  -Dnmvn.pluginsFile=$PWD/build/catalogs/nmvn-spring-4.1.0.plugins \\
+  -Dnmvn.imageName=nmvn-spring-4.1.0
+# → native/launcher/target/nmvn-spring-4.1.0
+# (add ,crema to -P for the crema variant; see native/BUILDING.md)
 # → build/work/…  (scratch)
 ```
 
@@ -64,10 +64,12 @@ Multiple Boot versions:
 ```bash
 ./catalog/resolve_boot_catalog.py --boot-version 4.1.0 --language java
 ./catalog/resolve_boot_catalog.py --boot-version 4.0.7 --language java
-./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
-./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.0.7.json
-# → build/nmvn-spring-4.1.0
-# → build/nmvn-spring-4.0.7
+for BOOT in 4.1.0 4.0.7; do
+  ./mvnw -Pnative package -pl native/launcher -am -DskipTests \
+    -Dnmvn.pluginsFile=$PWD/build/catalogs/nmvn-spring-$BOOT.plugins \
+    -Dnmvn.imageName=nmvn-spring-$BOOT
+done
+# → native/launcher/target/nmvn-spring-4.1.0, ...-4.0.7
 ```
 
 | Flag | Meaning |

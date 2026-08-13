@@ -85,7 +85,9 @@ import org.eclipse.aether.util.filter.DependencyFilterUtils;
  *   --argfile &lt;path&gt;                required, image-classpath argfile to write
  *   --extra-cp &lt;path&gt;               repeatable: sidecar jar, jvm-channel jar, ... (image classpath)
  *   --plugins &lt;entries&gt;             optional; entries separated by whitespace/newlines, commas
- *                                     also accepted when no entry carries a '|' dependency key
+ *                                     also accepted when no entry carries a '|' dependency key;
+ *                                     the entry {@code @default-lifecycle} expands to the dist's
+ *                                     default lifecycle plugin set (see defaultLifecyclePlugins)
  *   --plugins-file &lt;path&gt;           optional; newline-separated entries
  * </pre>
  *
@@ -148,7 +150,14 @@ public final class GenerateRealmSpec extends AbstractMojo {
                 }
             }
         }
-        if (pluginsFile != null && Files.isRegularFile(pluginsFile)) {
+        if (pluginsFile != null && !pluginsFile.toString().isEmpty()) {
+            // Fail LOUDLY on a missing file: silently skipping would bake a baseline image with
+            // nothing in it. Classic cause: a relative path — Maven resolves relative Path
+            // parameters against the MODULE basedir (native/launcher), not the invocation dir.
+            if (!Files.isRegularFile(pluginsFile)) {
+                throw new IllegalArgumentException("pluginsFile does not exist: " + pluginsFile
+                        + " (relative paths resolve against the module basedir — pass an absolute path)");
+            }
             pluginsInput.append('\n').append(Files.readString(pluginsFile));
         }
 
@@ -161,7 +170,17 @@ public final class GenerateRealmSpec extends AbstractMojo {
         }
         Files.createDirectories(work);
 
-        List<String> entries = splitPluginEntries(pluginsInput.toString());
+        List<String> entries = new ArrayList<>();
+        for (String entry : splitPluginEntries(pluginsInput.toString())) {
+            if (DEFAULT_LIFECYCLE_SENTINEL.equals(entry)) {
+                entries.addAll(defaultLifecyclePlugins(mavenHome));
+            } else {
+                entries.add(entry);
+            }
+        }
+        // The resolved entry list, as a record (and so thin drivers can publish a .plugins file
+        // without re-deriving it — the @default-lifecycle sentinel is expanded here).
+        Files.write(work.resolve("plugins.txt"), entries, StandardCharsets.UTF_8);
         // Both files are ALWAYS written, even with nothing to bake: the pom passes their paths as
         // static -Dnmvn.prebuilt.* buildArgs, and PrebuiltPluginRealms treats a BLANK spec as
         // "registry empty" (and an empty unlinkable list as no drops) — the baseline image.
@@ -203,18 +222,78 @@ public final class GenerateRealmSpec extends AbstractMojo {
         return entries;
     }
 
-    /** The groupId:artifactId set maven-core exports to every plugin realm (from extension.xml). */
-    private static Set<String> exportedArtifacts(Path mavenHome) throws Exception {
-        Path coreJar;
+    /** Plugin-list entry that expands to the dist's default lifecycle plugin set. */
+    static final String DEFAULT_LIFECYCLE_SENTINEL = "@default-lifecycle";
+
+    /**
+     * The default 'clean' + 'default' lifecycle bindings for jar packaging — the plugin versions
+     * a project WITHOUT a version-pinning parent requests. NOT hardcoded: read from the compiled
+     * version constants of the DIST's maven-core (the ConstantValue attributes of the fields
+     * below, parsed with the ClassFile API — no class loading, no second Maven in this VM), so
+     * the baked versions always match the binary actually embedded in the image, even if the
+     * working tree has moved on since the dist was built. Same source of truth the retired
+     * build-nmvn-generic.sh read via javap.
+     */
+    private static List<String> defaultLifecyclePlugins(Path mavenHome) throws Exception {
+        String provider = "org/apache/maven/lifecycle/providers/packaging/AbstractLifecycleMappingProvider.class";
+        String cleanLifecycle = "org/apache/maven/internal/impl/DefaultLifecycleRegistry$CleanLifecycle.class";
+        List<String> plugins = new ArrayList<>();
+        try (JarFile jar = new JarFile(coreJar(mavenHome).toFile())) {
+            plugins.add("org.apache.maven.plugins:maven-clean-plugin:"
+                    + stringConstant(jar, cleanLifecycle, "MAVEN_CLEAN_PLUGIN_VERSION"));
+            for (String[] plugin : new String[][] {
+                {"maven-resources-plugin", "RESOURCES_PLUGIN_VERSION"},
+                {"maven-compiler-plugin", "COMPILER_PLUGIN_VERSION"},
+                {"maven-surefire-plugin", "SUREFIRE_PLUGIN_VERSION"},
+                {"maven-jar-plugin", "JAR_PLUGIN_VERSION"},
+                {"maven-install-plugin", "INSTALL_PLUGIN_VERSION"},
+                {"maven-deploy-plugin", "DEPLOY_PLUGIN_VERSION"},
+            }) {
+                plugins.add("org.apache.maven.plugins:" + plugin[0] + ":" + stringConstant(jar, provider, plugin[1]));
+            }
+        }
+        System.err.println("GenerateRealmSpec: " + DEFAULT_LIFECYCLE_SENTINEL + " (from the dist's maven-core):");
+        for (String plugin : plugins) {
+            System.err.println("    " + plugin);
+        }
+        return plugins;
+    }
+
+    /** A compiled {@code static final String} constant, read from the class file's ConstantValue. */
+    private static String stringConstant(JarFile jar, String classEntry, String fieldName) throws Exception {
+        ZipEntry entry = jar.getEntry(classEntry);
+        if (entry == null) {
+            throw new IllegalStateException(
+                    "No " + classEntry + " in " + jar.getName() + " (class moved? update defaultLifecyclePlugins)");
+        }
+        var classModel = java.lang.classfile.ClassFile.of()
+                .parse(jar.getInputStream(entry).readAllBytes());
+        for (var field : classModel.fields()) {
+            if (field.fieldName().equalsString(fieldName)) {
+                var constant = field.findAttribute(java.lang.classfile.Attributes.constantValue());
+                if (constant.isPresent() && constant.get().constant().constantValue() instanceof String version) {
+                    return version;
+                }
+            }
+        }
+        throw new IllegalStateException("No String constant " + fieldName + " in " + classEntry
+                + " (constant renamed/moved? update defaultLifecyclePlugins)");
+    }
+
+    private static Path coreJar(Path mavenHome) throws Exception {
         try (var jars = Files.newDirectoryStream(mavenHome.resolve("lib"), "maven-core-*.jar")) {
             var it = jars.iterator();
             if (!it.hasNext()) {
                 throw new IllegalStateException("No maven-core jar under " + mavenHome.resolve("lib"));
             }
-            coreJar = it.next();
+            return it.next();
         }
+    }
+
+    /** The groupId:artifactId set maven-core exports to every plugin realm (from extension.xml). */
+    private static Set<String> exportedArtifacts(Path mavenHome) throws Exception {
         Set<String> exported = new LinkedHashSet<>();
-        try (JarFile jar = new JarFile(coreJar.toFile())) {
+        try (JarFile jar = new JarFile(coreJar(mavenHome).toFile())) {
             ZipEntry entry = jar.getEntry("META-INF/maven/extension.xml");
             String xml = new String(jar.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8);
             Matcher m = Pattern.compile("<exportedArtifact>\\s*([^<\\s]+)\\s*</exportedArtifact>")

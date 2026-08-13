@@ -2,23 +2,21 @@
 #   - specialized Spring Boot images (nmvn-spring-<bootVersion>), plugin set from the catalog
 #   - one generic image (nmvn-generic) baking only Maven's DEFAULT lifecycle plugin versions —
 #     what a project with no version-pinning parent requests; the versions are resolved from
-#     the dist's maven-core jar by build-nmvn-generic.sh, not hardcoded
+#     the dist's maven-core jar by the generate-realm-spec mojo (@default-lifecycle), not
+#     hardcoded
 #
-# Same commands as local. Scripts write under build/ by default:
-#   build/catalogs/   — catalogs
-#   build/work/       — scratch
-#   build/nmvn-spring-*, build/nmvn-generic — images
+# Images are built by the Maven native profiles (mvn -Pnative,crema package -pl native/launcher
+# -am; native-maven-plugin finds native-image from JAVA_HOME, incl. Windows). Layout:
+#   build/catalogs/   — catalogs + per-image .plugins lists (from resolve_boot_catalog.py)
+#   build/nmvn-spring-*, build/nmvn-generic — images (moved from native/launcher/target/)
 # Maven dist stays in apache-maven/target/.
 #
-# Toolchain: download GraalVM CE 25.2.4, set JAVA_HOME (+ bin on PATH). Finding native-image
-# (including Windows native-image.cmd) and Crema checks live in
-# build-scripts/crema/build-nmvn-prebuilt.sh (the default NMVN_VARIANT; a non-crema variant
-# exists under build-scripts/non-crema/).
+# Toolchain: download GraalVM CE 25.2.4, set JAVA_HOME (+ bin on PATH).
 #
 # Per platform, for Boot 4.1.0 and 4.0.7:
-#   resolve_boot_catalog.py → build-scripts/build-nmvn-catalog.sh → zip to dist/
+#   resolve_boot_catalog.py → mvn -Pnative,crema (via build_image) → zip to dist/
 # then the generic image:
-#   build-scripts/build-nmvn-generic.sh → zip to dist/
+#   build_image nmvn-generic -Dnmvn.plugins=@default-lifecycle → zip to dist/
 #
 name: Build Spring Native Maven
 
@@ -136,11 +134,39 @@ jobs:
       - name: Resolve catalogs and build Spring specialized + generic images
         run: |
           set -euo pipefail
-          chmod +x catalog/resolve_boot_catalog.py build-scripts/build-nmvn-catalog.sh build-scripts/build-nmvn-generic.sh build-scripts/crema/build-nmvn-prebuilt.sh build-scripts/non-crema/build-nmvn-prebuilt.sh
+          chmod +x catalog/resolve_boot_catalog.py ./mvnw
 
           # Fresh build tree (same layout as local defaults).
           rm -rf build dist
           mkdir -p dist
+
+          # Release images are the crema variant. ABSOLUTE paths only: Maven resolves relative
+          # Path mojo parameters against the MODULE basedir (native/launcher). Dist dir by glob;
+          # Windows java needs C:/ style paths (cygpath -m).
+          PROFILES="native,crema"
+          REPO_ROOT="$PWD"
+          if command -v cygpath >/dev/null 2>&1; then
+            REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+          fi
+          MAVEN_DIST=""
+          for d in apache-maven/target/apache-maven-*; do
+            [ -d "$d/lib" ] && MAVEN_DIST="$REPO_ROOT/$d" && break
+          done
+
+          build_image() {
+            # $1 = image name; remaining args = -Dnmvn.plugins* selection
+            local name="$1"
+            shift
+            ./mvnw -P"$PROFILES" package -pl native/launcher -am -B -DskipTests \
+              "$@" -Dnmvn.imageName="$name" -Dnmvn.mavenHome="$MAVEN_DIST"
+            if [ -f "native/launcher/target/${name}.exe" ]; then
+              mv "native/launcher/target/${name}.exe" build/
+            else
+              mv "native/launcher/target/${name}" build/
+            fi
+            # the mojo's record of the (expanded) baked plugin set
+            cp native/launcher/target/nmvn/plugins.txt "build/${name}.plugins"
+          }
 
           package_zip() {
             local zip_name="$1"
@@ -163,7 +189,7 @@ jobs:
               --boot-version "${BOOT}" \
               --language java
 
-            ./build-scripts/build-nmvn-catalog.sh "${CATALOG}"
+            build_image "nmvn-spring-${BOOT}" -Dnmvn.pluginsFile="$REPO_ROOT/build/catalogs/nmvn-spring-${BOOT}.plugins"
 
             BIN="build/nmvn-spring-${BOOT}"
             if [ -f "${BIN}.exe" ]; then
@@ -185,10 +211,11 @@ jobs:
           echo ">>> Generic image (Maven default lifecycle plugins)"
           echo "=========================================="
 
-          # Plugin versions are resolved from the dist's maven-core jar by the script itself
-          # (default lifecycle bindings — what a project without a version-pinning parent
-          # requests), so there is nothing to keep in sync here when the bindings are bumped.
-          ./build-scripts/build-nmvn-generic.sh
+          # Plugin versions are resolved from the dist's maven-core jar by the
+          # generate-realm-spec mojo (@default-lifecycle expands to the default lifecycle
+          # bindings — what a project without a version-pinning parent requests), so there is
+          # nothing to keep in sync here when the bindings are bumped.
+          build_image "nmvn-generic" -Dnmvn.plugins=@default-lifecycle
 
           GENERIC_BIN="build/nmvn-generic"
           if [ -f "${GENERIC_BIN}.exe" ]; then
