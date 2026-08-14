@@ -188,25 +188,6 @@
       </properties>
       <build>
         <plugins>
-          <!--
-            exposes ${org.apache.maven:prebuilt-feature:jar},
-            ${org.apidesign.graalvm:jvm-channel:jar}
-            for the sanitize Maven plugin
-            below
-          -->
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-dependency-plugin</artifactId>
-            <executions>
-              <execution>
-                <id>artifact-path-properties</id>
-                <goals>
-                  <goal>properties</goal>
-                </goals>
-                <phase>initialize</phase>
-              </execution>
-            </executions>
-          </plugin>
           <plugin>
             <groupId>org.apache.maven</groupId>
             <artifactId>sanitize-maven-plugin</artifactId>
@@ -224,8 +205,8 @@
                   <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
                   <extraCp>
                     <!-- should use dependencies rather than JARs -->
-                    <argument>${org.apache.maven:prebuilt-feature:jar}</argument>
-                    <argument>${org.apidesign.graalvm:jvm-channel:jar}</argument>
+                    <dependency>org.apache.maven:prebuilt-feature:${project.version}</dependency>
+                    <dependency>org.apidesign.graalvm:jvm-channel:1.1</dependency>
                   </extraCp>
                   <plugins>
                     <argument>${nmvn.plugins}</argument>
