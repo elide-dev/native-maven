@@ -206,7 +206,7 @@
                   <extraCp>
                     <!-- should use dependencies rather than JARs -->
                     <dependency>org.apache.maven:prebuilt-feature:${project.version}</dependency>
-                    <dependency>org.apidesign.graalvm:jvm-channel:1.1</dependency>
+                    <dependency>org.apidesign.graalvm:jvm-channel:${jvmChannelVersion}</dependency>
                   </extraCp>
                   <plugins>
                     <argument>${nmvn.plugins}</argument>
