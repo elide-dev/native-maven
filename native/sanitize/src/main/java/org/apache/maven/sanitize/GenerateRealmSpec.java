@@ -39,6 +39,7 @@ import org.apache.maven.api.plugin.annotations.Parameter;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
+import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -46,6 +47,8 @@ import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.Exclusion;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.resolution.ArtifactRequest;
+import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.util.artifact.JavaScopes;
@@ -103,6 +106,10 @@ public final class GenerateRealmSpec extends AbstractMojo {
     @Inject
     RepositorySystem repoSystem;
 
+    // Current maven project context (needed to fetch remote repositories)
+    @Parameter(defaultValue = "${project}", readonly = true, required = true)
+    private MavenProject project;
+
     /** The running build's session: local repo, mirrors, proxies, auth, offline — all inherited. */
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true)
     RepositorySystemSession repoSession;
@@ -124,7 +131,7 @@ public final class GenerateRealmSpec extends AbstractMojo {
     Path argfile;
 
     @Parameter
-    List<Path> extraCp = new ArrayList<>();
+    List<String> extraCp = new ArrayList<>();
 
     @Parameter
     List<String> plugins;
@@ -199,9 +206,9 @@ public final class GenerateRealmSpec extends AbstractMojo {
             }
             Files.writeString(spec, String.join("\n", specLines) + "\n", StandardCharsets.UTF_8);
             System.err.println("GenerateRealmSpec: wrote " + specLines.size() + " realm(s) to " + spec);
-            runSanitize(imageClasspath(mavenHome, extraCp), spec, work, unlinkable);
+            runSanitize(imageClasspath(mavenHome, toExtraCp()), spec, work, unlinkable);
         }
-        writeArgfile(argfile, imageClasspath(mavenHome, extraCp));
+        writeArgfile(argfile, imageClasspath(mavenHome, toExtraCp()));
         System.err.println("GenerateRealmSpec: wrote image-classpath argfile " + argfile);
     }
 
@@ -530,5 +537,22 @@ public final class GenerateRealmSpec extends AbstractMojo {
         Files.writeString(argfile, content.toString(), StandardCharsets.UTF_8);
     }
 
-    public GenerateRealmSpec() {}
+    private List<Path> toExtraCp() throws MojoExecutionException {
+        var arr = new ArrayList<Path>();
+        for (var extraArtifact : extraCp) {
+            try {
+                var artifact = new DefaultArtifact(extraArtifact);
+                var request = new ArtifactRequest();
+                request.setArtifact(artifact);
+                var remoteRepos = project.getRemoteProjectRepositories();
+                request.setRepositories(remoteRepos);
+                var result = repoSystem.resolveArtifact(repoSession, request);
+                var path = result.getArtifact().getFile().toPath();
+                arr.add(path);
+            } catch (ArtifactResolutionException e) {
+                throw new MojoExecutionException("Could not resolve additional artifact dependencies", e);
+            }
+        }
+        return arr;
+    }
 }
