@@ -24,6 +24,8 @@ under the License.
       <outputDirectory>boot</outputDirectory>
       <includes>
         <include>org.codehaus.plexus:plexus-classworlds</include>
+        <!-- nmvn JVM-fallback entry point: boot/ (app classpath) but NOT lib/ (m2.conf realm) -->
+        <include>org.apache.maven:nmvn-hotspot-main</include>
       </includes>
     </dependencySet>
     <dependencySet>
@@ -31,6 +33,7 @@ under the License.
       <outputDirectory>lib</outputDirectory>
       <excludes>
         <exclude>org.codehaus.plexus:plexus-classworlds</exclude>
+        <exclude>org.apache.maven:nmvn-hotspot-main</exclude>
       </excludes>
     </dependencySet>
   </dependencySets>

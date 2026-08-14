@@ -42,7 +42,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>One JVM per process.</b> HotSpot permits a single {@code JNI_CreateJavaVM} per process
  * and cannot be re-created after destruction, so the JVM is created lazily on the first delegated
- * goal and reused for all others (the HotSpot-side {@code org.apache.maven.cling.HotspotMavenMain} likewise
+ * goal and reused for all others (the HotSpot-side {@code nmvn.hotspot.HotspotMavenMain} likewise
  * configures its classworlds Launcher once and reuses it).
  *
  * <p><b>Exit codes, not System.exit.</b> The HotSpot side shares the process, so Maven's exiting
@@ -61,8 +61,8 @@ final class HotspotMavenRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
 
-    /** The HotSpot-side wrapper main; ships in the dist's maven-cli jar (see boot()'s classpath). */
-    private static final String MAIN_CLASS = "org.apache.maven.cling.HotspotMavenMain";
+    /** The HotSpot-side wrapper main; ships as the dist's boot/nmvn-hotspot-main jar. */
+    private static final String MAIN_CLASS = "nmvn.hotspot.HotspotMavenMain";
 
     /** @GuardedBy("HotspotMavenRunner.class") — see "one JVM per process" above. */
     private static JVM jvm;
@@ -230,15 +230,16 @@ final class HotspotMavenRunner {
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
-        // java.class.path stays MINIMAL, mirroring the stock mvn script: the classworlds boot jar
-        // plus ONLY the maven-cli jar (it carries HotspotMavenMain, which references nothing but
-        // classworlds and the JDK — JNI FindClass links lazily). Putting all of lib/* on the app
-        // classpath would make every Maven class exist TWICE in the delegated JVM (app loader +
-        // the plexus.core realm built from m2.conf) — the doubly-present-classes topology this
-        // project's realm design exists to avoid.
+        // java.class.path = boot/* ONLY — the stock mvn script's topology. boot/ carries
+        // classworlds plus nmvn-hotspot-main.jar (the wrapper; the dist assembly puts it there
+        // precisely because boot/ is on the app classpath but NOT loaded into the m2.conf realm).
+        // Maven proper defines inside the plexus.core realm, exactly as under bin/mvn. Do NOT
+        // add lib/* here and do NOT move the wrapper into a lib/ jar: classworlds realms delegate
+        // PARENT-FIRST, so any realm-visible jar that also sits on the app classpath gets
+        // hijacked to the app loader — tried with the wrapper inside maven-cli.jar, which died
+        // with NoClassDefFoundError: MessageBuilderFactory from an app-loader-defined MavenCling.
         var classpath = new StringBuilder();
-        appendToCp(new File(mavenHome, "boot"), classpath, name -> true);
-        appendToCp(new File(mavenHome, "lib"), classpath, name -> name.startsWith("maven-cli-"));
+        appendToCp(new File(mavenHome, "boot"), classpath);
         var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
         options.add("-Dmaven.home=" + mavenHome);
@@ -251,12 +252,10 @@ final class HotspotMavenRunner {
         return JVM.create(new File(javaHome), options.toArray(new String[0]));
     }
 
-    private static void appendToCp(
-            File dirWithJars, StringBuilder collectTo, java.util.function.Predicate<String> nameFilter)
-            throws IOException {
-        var jars = dirWithJars.listFiles((dir, name) -> name.endsWith(".jar") && nameFilter.test(name));
+    private static void appendToCp(File dirWithJars, StringBuilder collectTo) throws IOException {
+        var jars = dirWithJars.listFiles((dir, name) -> name.endsWith(".jar"));
         if (jars == null || jars.length == 0) {
-            throw new IOException("No matching jars under " + dirWithJars);
+            throw new IOException("No jars under " + dirWithJars);
         }
         for (var jar : jars) {
             if (!collectTo.isEmpty()) {

@@ -33,9 +33,9 @@ lifecycle ordering).
 
 ## How it works
 
-Two classes in the `prebuilt-feature` sidecar, plus the HotSpot-side entry point which lives in
-`maven-cli` (the one nmvn-support class inside the distribution itself — it has to be loadable by
-the delegated JVM from a real jar):
+Two classes in the `prebuilt-feature` sidecar, plus the HotSpot-side entry point in its own tiny
+module (`native/hotspot-main`), shipped by the dist assembly as `boot/nmvn-hotspot-main-*.jar` —
+loadable by the delegated JVM's app loader without entering the m2.conf realm:
 
 | Class | Role |
 |---|---|
@@ -43,10 +43,14 @@ the delegated JVM from a real jar):
 | `nmvn.HotspotMavenRunner` | Boots the HotSpot JVM **lazily, once per process** (HotSpot allows a single `JNI_CreateJavaVM`; no re-create after failure) and builds the delegated command line. Forwards user properties (minus Maven-injected `session.*`), user settings, non-default global settings, local repo, offline flag, active profiles. |
 | `org.apache.maven.cling.HotspotMavenMain` | The HotSpot-side entry point. Calls classworlds `Launcher.launch()` — **not** `main`, because Maven's exiting entry points would `System.exit` the shared process — and reports the exit code through a temp file (a JNI void call has no return channel; `executeMain` swallows JVM-side exceptions). The `Launcher` is configured once from `m2.conf` and reused across goals. It is packaged into a JAR inside of Maven distribution to be loadable for HotSpot JVM.
 
-Boot shape mirrors the `mvn` script: classpath = `$MAVEN_HOME/boot/*.jar` +
-ONLY the maven-cli jar (carries the wrapper; the rest of `lib/*` stays off the
-app classpath so Maven's classes exist once, in the plexus.core realm),
-`-Dclassworlds.conf=$MAVEN_HOME/bin/m2.conf`,
+Boot shape mirrors the `mvn` script exactly: `java.class.path` =
+`$MAVEN_HOME/boot/*.jar` only (classworlds + the wrapper jar); Maven proper
+defines inside the plexus.core realm from m2.conf. The wrapper must stay in
+`boot/`, never in a `lib/` jar — classworlds realms delegate parent-first, so
+a realm-visible jar on the app classpath gets hijacked to the app loader
+(tried with the wrapper inside maven-cli.jar: NoClassDefFoundError on the
+maven-api types from an app-loader-defined MavenCling). Plus
+`-Dclassworlds.conf=$MAVEN_HOME/bin/m2.conf` and
 `maven.home`/`maven.multiModuleProjectDirectory` carried over from the values
 NmvnLauncher already established.
 

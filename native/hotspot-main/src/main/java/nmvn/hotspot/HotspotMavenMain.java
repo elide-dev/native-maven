@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.maven.cling;
+package nmvn.hotspot;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -40,11 +40,16 @@ import org.codehaus.plexus.classworlds.launcher.Launcher;
  * delegated goal of the whole build and re-loading the Maven realm per goal would only burn
  * metaspace and time.
  *
- * <p>This class ships in the maven-cli jar of the Maven distribution; HotspotMavenRunner puts
- * that jar (plus the classworlds boot jar) on the delegated JVM's {@code java.class.path}. It
- * must reference nothing beyond classworlds and the JDK — anything else would either fail to
- * link or force more of {@code lib/*} onto the app classpath, where Maven's classes would then
- * exist twice (app loader + the plexus.core realm built from m2.conf).
+ * <p>This class ships as its own tiny jar in the distribution's {@code boot/} directory —
+ * deliberately NOT in {@code lib/}. {@code boot/} is on the delegated JVM's
+ * {@code java.class.path} (so JNI {@code FindClass} finds this class) but is not loaded into the
+ * m2.conf realm, so Maven proper still defines inside the {@code plexus.core} realm: the exact
+ * topology of the stock {@code mvn} script. Two constraints follow. (1) This module must
+ * reference nothing beyond classworlds and the JDK. (2) The class must never move into a
+ * realm-loaded jar: classworlds realms delegate PARENT-FIRST, so a realm-visible jar that also
+ * sits on the app classpath gets hijacked to the app loader — tried with the wrapper inside
+ * maven-cli.jar, which died with {@code NoClassDefFoundError: MessageBuilderFactory} from an
+ * app-loader-defined MavenCling.
  */
 public final class HotspotMavenMain {
 
