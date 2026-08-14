@@ -20,7 +20,6 @@ package nmvn;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -43,7 +42,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>One JVM per process.</b> HotSpot permits a single {@code JNI_CreateJavaVM} per process
  * and cannot be re-created after destruction, so the JVM is created lazily on the first delegated
- * goal and reused for all others (the HotSpot-side {@code nmvn.hotspot.HotspotMavenMain} likewise
+ * goal and reused for all others (the HotSpot-side {@code org.apache.maven.cling.HotspotMavenMain} likewise
  * configures its classworlds Launcher once and reuses it).
  *
  * <p><b>Exit codes, not System.exit.</b> The HotSpot side shares the process, so Maven's exiting
@@ -63,7 +62,7 @@ final class HotspotMavenRunner {
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
 
     /** Binary name of the HotSpot-side wrapper main; its bytecode is baked as an image resource. */
-    private static final String MAIN_CLASS = "nmvn.hotspot.HotspotMavenMain";
+    private static final String MAIN_CLASS = "org.apache.maven.cling.HotspotMavenMain";
 
     /** @GuardedBy("HotspotMavenRunner.class") — see "one JVM per process" above. */
     private static JVM jvm;
@@ -226,21 +225,15 @@ final class HotspotMavenRunner {
      * properties NmvnLauncher already established for the native side.
      */
     private static JVM boot() throws IOException {
-        String javaHome = System.getProperty("java.home");
-        String mavenHome = System.getProperty("maven.home");
+        var javaHome = System.getProperty("java.home");
+        var mavenHome = System.getProperty("maven.home");
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
-        File bootDir = new File(mavenHome, "boot");
-        File[] bootJars = bootDir.listFiles((dir, name) -> name.endsWith(".jar"));
-        if (bootJars == null || bootJars.length == 0) {
-            throw new IOException("No classworlds jar under " + bootDir);
-        }
-        StringBuilder classpath = new StringBuilder(extractWrapper().toString());
-        for (File jar : bootJars) {
-            classpath.append(File.pathSeparatorChar).append(jar.getAbsolutePath());
-        }
-        List<String> options = new ArrayList<>();
+        var classpath = new StringBuilder();
+        appendToCp(new File(mavenHome, "boot"), classpath);
+        appendToCp(new File(mavenHome, "lib"), classpath);
+        var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
         options.add("-Dmaven.home=" + mavenHome);
         options.add("-Dclassworlds.conf=" + new File(new File(mavenHome, "bin"), "m2.conf"));
@@ -252,23 +245,16 @@ final class HotspotMavenRunner {
         return JVM.create(new File(javaHome), options.toArray(new String[0]));
     }
 
-    /**
-     * Writes the wrapper main's bytecode (baked into the image as a resource — see the
-     * IncludeResources pattern in build-nmvn-prebuilt.sh) into a temp directory that goes on the
-     * HotSpot classpath. The wrapper is a SINGLE class file by contract (see its javadoc).
-     */
-    private static Path extractWrapper() throws IOException {
-        String resource = MAIN_CLASS.replace('.', '/') + ".class";
-        Path dir = Files.createTempDirectory("nmvn-jvm-boot");
-        Path classFile = dir.resolve(resource);
-        Files.createDirectories(classFile.getParent());
-        try (InputStream in = HotspotMavenRunner.class.getClassLoader().getResourceAsStream(resource)) {
-            if (in == null) {
-                throw new IOException("Resource " + resource + " not baked into the image"
-                        + " — missing -H:IncludeResources='nmvn/hotspot/.*' in the build script?");
-            }
-            Files.copy(in, classFile);
+    private static void appendToCp(File dirWithJars, StringBuilder collectTo) throws IOException {
+        var bootJars = dirWithJars.listFiles((dir, name) -> name.endsWith(".jar"));
+        if (bootJars == null || bootJars.length == 0) {
+            throw new IOException("No classworlds jar under " + dirWithJars);
         }
-        return dir;
+        for (var jar : bootJars) {
+            if (!collectTo.isEmpty()) {
+                collectTo.append(File.pathSeparatorChar);
+            }
+            collectTo.append(jar.getAbsolutePath());
+        }
     }
 }

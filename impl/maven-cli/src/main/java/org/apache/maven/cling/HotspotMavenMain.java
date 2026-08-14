@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package nmvn.hotspot;
+package org.apache.maven.cling;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
