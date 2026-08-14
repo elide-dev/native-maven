@@ -61,7 +61,7 @@ final class HotspotMavenRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
 
-    /** Binary name of the HotSpot-side wrapper main; its bytecode is baked as an image resource. */
+    /** The HotSpot-side wrapper main; ships in the dist's maven-cli jar (see boot()'s classpath). */
     private static final String MAIN_CLASS = "org.apache.maven.cling.HotspotMavenMain";
 
     /** @GuardedBy("HotspotMavenRunner.class") — see "one JVM per process" above. */
@@ -230,9 +230,15 @@ final class HotspotMavenRunner {
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
+        // java.class.path stays MINIMAL, mirroring the stock mvn script: the classworlds boot jar
+        // plus ONLY the maven-cli jar (it carries HotspotMavenMain, which references nothing but
+        // classworlds and the JDK — JNI FindClass links lazily). Putting all of lib/* on the app
+        // classpath would make every Maven class exist TWICE in the delegated JVM (app loader +
+        // the plexus.core realm built from m2.conf) — the doubly-present-classes topology this
+        // project's realm design exists to avoid.
         var classpath = new StringBuilder();
-        appendToCp(new File(mavenHome, "boot"), classpath);
-        appendToCp(new File(mavenHome, "lib"), classpath);
+        appendToCp(new File(mavenHome, "boot"), classpath, name -> true);
+        appendToCp(new File(mavenHome, "lib"), classpath, name -> name.startsWith("maven-cli-"));
         var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
         options.add("-Dmaven.home=" + mavenHome);
@@ -245,12 +251,14 @@ final class HotspotMavenRunner {
         return JVM.create(new File(javaHome), options.toArray(new String[0]));
     }
 
-    private static void appendToCp(File dirWithJars, StringBuilder collectTo) throws IOException {
-        var bootJars = dirWithJars.listFiles((dir, name) -> name.endsWith(".jar"));
-        if (bootJars == null || bootJars.length == 0) {
-            throw new IOException("No classworlds jar under " + dirWithJars);
+    private static void appendToCp(
+            File dirWithJars, StringBuilder collectTo, java.util.function.Predicate<String> nameFilter)
+            throws IOException {
+        var jars = dirWithJars.listFiles((dir, name) -> name.endsWith(".jar") && nameFilter.test(name));
+        if (jars == null || jars.length == 0) {
+            throw new IOException("No matching jars under " + dirWithJars);
         }
-        for (var jar : bootJars) {
+        for (var jar : jars) {
             if (!collectTo.isEmpty()) {
                 collectTo.append(File.pathSeparatorChar);
             }

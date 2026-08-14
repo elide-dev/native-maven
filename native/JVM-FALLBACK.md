@@ -33,7 +33,9 @@ lifecycle ordering).
 
 ## How it works
 
-Three classes in the `prebuilt-feature` sidecar:
+Two classes in the `prebuilt-feature` sidecar, plus the HotSpot-side entry point which lives in
+`maven-cli` (the one nmvn-support class inside the distribution itself — it has to be loadable by
+the delegated JVM from a real jar):
 
 | Class | Role |
 |---|---|
@@ -42,7 +44,9 @@ Three classes in the `prebuilt-feature` sidecar:
 | `org.apache.maven.cling.HotspotMavenMain` | The HotSpot-side entry point. Calls classworlds `Launcher.launch()` — **not** `main`, because Maven's exiting entry points would `System.exit` the shared process — and reports the exit code through a temp file (a JNI void call has no return channel; `executeMain` swallows JVM-side exceptions). The `Launcher` is configured once from `m2.conf` and reused across goals. It is packaged into a JAR inside of Maven distribution to be loadable for HotSpot JVM.
 
 Boot shape mirrors the `mvn` script: classpath = `$MAVEN_HOME/boot/*.jar` +
-extracted wrapper, `-Dclassworlds.conf=$MAVEN_HOME/bin/m2.conf`,
+ONLY the maven-cli jar (carries the wrapper; the rest of `lib/*` stays off the
+app classpath so Maven's classes exist once, in the plexus.core realm),
+`-Dclassworlds.conf=$MAVEN_HOME/bin/m2.conf`,
 `maven.home`/`maven.multiModuleProjectDirectory` carried over from the values
 NmvnLauncher already established.
 

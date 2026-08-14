@@ -40,9 +40,11 @@ import org.codehaus.plexus.classworlds.launcher.Launcher;
  * delegated goal of the whole build and re-loading the Maven realm per goal would only burn
  * metaspace and time.
  *
- * <p>CONSTRAINT: this class is baked into the image as a RESOURCE, extracted to a temp directory
- * at runtime, and must remain the compilation unit's ONLY class file — no lambdas, no anonymous or
- * nested classes (the extractor copies exactly one {@code .class} entry).
+ * <p>This class ships in the maven-cli jar of the Maven distribution; HotspotMavenRunner puts
+ * that jar (plus the classworlds boot jar) on the delegated JVM's {@code java.class.path}. It
+ * must reference nothing beyond classworlds and the JDK — anything else would either fail to
+ * link or force more of {@code lib/*} onto the app classpath, where Maven's classes would then
+ * exist twice (app loader + the plexus.core realm built from m2.conf).
  */
 public final class HotspotMavenMain {
 
