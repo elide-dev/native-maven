@@ -229,6 +229,17 @@ jobs:
           export MAVEN_HOME
 
           BINARY="$PWD/${NMVN_BIN}"
+
+          # Guard for the linux-hide-static-jdk-symbols profile (native/launcher/pom.xml): if the
+          # image dynamically exports the statically-linked JDK's JNU_* symbols again, the child
+          # HotSpot's libjava.so binds to them and dies during boot — fail here with the real
+          # reason instead of the downstream NPE.
+          if [ "$RUNNER_OS" = "Linux" ] && nm -D "$BINARY" 2>/dev/null | grep -q " JNU_"; then
+            nm -D "$BINARY" | grep " JNU_"
+            echo "::error::image exports JNU_* symbols — --exclude-libs,ALL stopped working, the JVM fallback child will crash"
+            exit 1
+          fi
+
           cd examples/java-maven-sample-project
 
           if ! OUT="$("$BINARY" "$NON_BAKED_GOAL" -Dexpression=maven.version -DforceStdout 2>&1)"; then
