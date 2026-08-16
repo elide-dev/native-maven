@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  E2E fixture for the JVM fallback (see test-nmvn-jvm-fallback.sh): a realistic project whose
+  NORMAL `clean package` needs plugins that are never baked into an nmvn image, bound to
+  lifecycle phases with explicit execution ids. On the non-crema variant every one of these
+  goals must delegate to the in-process HotSpot JVM; on crema they load at run time.
+
+  Plugin choice is deliberate: the fallback runs each delegated goal in a FRESH Maven session,
+  so only plugins whose effect lands on disk or in the exit code can work — enforcer (verdict)
+  and antrun (file). Plugins that mutate session state (build-helper:add-source, jacoco's
+  argLine, anything attaching artifacts) can NOT work through the fallback by design; do not
+  add them here expecting success.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.example</groupId>
+    <artifactId>jvm-fallback-sample</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <build>
+        <plugins>
+            <!-- non-baked, verdict-style: runs a rule and passes or fails the build -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.6.3</version>
+                <executions>
+                    <execution>
+                        <id>require-maven</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <phase>validate</phase>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>4.0</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- non-baked, disk-effect: proves the delegated goal really EXECUTED (the test
+                 asserts the marker file), not merely that Maven reported success -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>write-marker</id>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <phase>package</phase>
+                        <configuration>
+                            <target>
+                                <touch file="${project.build.directory}/fallback-marker.txt"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- Failure-propagation fixture: `clean package -Pimpossible-rule` must FAIL, and on
+             non-crema the failure must travel through the fallback's exit-code plumbing
+             (HotspotGoalFailedException). No Maven will ever satisfy [99,). -->
+        <profile>
+            <id>impossible-rule</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>impossible</id>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <phase>validate</phase>
+                                <configuration>
+                                    <rules>
+                                        <requireMavenVersion>
+                                            <version>[99,)</version>
+                                        </requireMavenVersion>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>
