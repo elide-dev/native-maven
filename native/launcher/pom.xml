@@ -189,34 +189,6 @@
       <build>
         <plugins>
           <plugin>
-            <groupId>org.apache.maven</groupId>
-            <artifactId>sanitize-maven-plugin</artifactId>
-            <version>${project.version}</version>
-            <executions>
-              <execution>
-                <id>generate-realm-spec</id>
-                <goals>
-                  <goal>generate-realm-spec</goal>
-                </goals>
-                <phase>prepare-package</phase>
-                <configuration>
-                  <mavenHome>${nmvn.mavenHome}</mavenHome>
-                  <work>${project.build.directory}/nmvn</work>
-                  <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
-                  <extraCp>
-                    <!-- should use dependencies rather than JARs -->
-                    <dependency>org.apache.maven:prebuilt-feature:${project.version}</dependency>
-                    <dependency>org.apidesign.graalvm:jvm-channel:${jvmChannelVersion}</dependency>
-                  </extraCp>
-                  <plugins>
-                    <argument>${nmvn.plugins}</argument>
-                  </plugins>
-                  <pluginsFile>${nmvn.pluginsFile}</pluginsFile>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-          <plugin>
             <groupId>org.graalvm.buildtools</groupId>
             <artifactId>native-maven-plugin</artifactId>
             <configuration>
@@ -258,6 +230,53 @@
                   <goal>compile-no-fork</goal>
                 </goals>
                 <phase>package</phase>
+              </execution>
+            </executions>
+          </plugin>
+          <!-- Declared AFTER native-maven-plugin ON PURPOSE: within one phase Maven runs
+               executions in plugin declaration order, and strip-pe-exports (package) must run on
+               the image the native build just produced. generate-realm-spec is bound to
+               prepare-package — an earlier phase — so it still runs before the image build
+               regardless of where this plugin is declared. -->
+          <plugin>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>sanitize-maven-plugin</artifactId>
+            <version>${project.version}</version>
+            <executions>
+              <execution>
+                <id>generate-realm-spec</id>
+                <goals>
+                  <goal>generate-realm-spec</goal>
+                </goals>
+                <phase>prepare-package</phase>
+                <configuration>
+                  <mavenHome>${nmvn.mavenHome}</mavenHome>
+                  <work>${project.build.directory}/nmvn</work>
+                  <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
+                  <extraCp>
+                    <!-- should use dependencies rather than JARs -->
+                    <dependency>org.apache.maven:prebuilt-feature:${project.version}</dependency>
+                    <dependency>org.apidesign.graalvm:jvm-channel:${jvmChannelVersion}</dependency>
+                  </extraCp>
+                  <plugins>
+                    <argument>${nmvn.plugins}</argument>
+                  </plugins>
+                  <pluginsFile>${nmvn.pluginsFile}</pluginsFile>
+                </configuration>
+              </execution>
+              <!-- Windows counterpart of the linux-hide-static-jdk-symbols profile below: drops
+                   the .exe's PE export table (JNI_OnLoad_zip/nio/net from the statically linked
+                   JDK libs) so the JVM-fallback child HotSpot cannot bind to the image's native
+                   code. Skipped on other OSes; on Windows a missing .exe fails the build. -->
+              <execution>
+                <id>strip-pe-exports</id>
+                <goals>
+                  <goal>strip-pe-exports</goal>
+                </goals>
+                <phase>package</phase>
+                <configuration>
+                  <binary>${project.build.directory}/${nmvn.imageName}.exe</binary>
+                </configuration>
               </execution>
             </executions>
           </plugin>
