@@ -202,6 +202,16 @@ jobs:
           # Hand the resolved name (with .exe on Windows) to the smoke-test step.
           echo "NMVN_BIN=${BIN}" >> "$GITHUB_ENV"
 
+      # Windows counterpart of the linux-hide-static-jdk-symbols profile (native/launcher/
+      # pom.xml): MSVC has no exclude-libs switch, so the statically-linked JDK libraries'
+      # dllexport symbols (JNI_OnLoad_zip/nio/net, ...) are removed from the finished .exe
+      # instead. Without this, the JVM-fallback child HotSpot detects them via JEP 178 and runs
+      # the image's natives inside itself until it crashes (see tools/strip_pe_exports.py).
+      # Runs BEFORE the smoke tests so they exercise the patched binary.
+      - name: Strip PE exports so the fallback child JVM cannot bind to the image (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        run: python tools/strip_pe_exports.py "${NMVN_BIN}"
+
       - name: Smoke-test examples/spring against the image
         run: |
           set -euo pipefail
