@@ -20,8 +20,10 @@ package nmvn;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -61,8 +63,10 @@ final class HotspotMavenRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
 
-    /** The HotSpot-side wrapper main; ships as the dist's boot/nmvn-hotspot-main jar. */
+    /** Binary name of the HotSpot-side wrapper main; its jar is baked as an image resource. */
     private static final String MAIN_CLASS = "nmvn.hotspot.HotspotMavenMain";
+
+    private static final String WRAPPER_JAR_RESOURCE = "nmvn/hotspot/nmvn-hotspot-main.jar";
 
     /** @GuardedBy("HotspotMavenRunner.class") — see "one JVM per process" above. */
     private static JVM jvm;
@@ -219,10 +223,8 @@ final class HotspotMavenRunner {
     }
 
     /**
-     * Boots the HotSpot JVM with the same shape the {@code mvn} script uses: classpath =
-     * {@code $MAVEN_HOME/boot/*.jar} (classworlds) plus the extracted wrapper, m2.conf as the
-     * classworlds configuration, and the maven.home/maven.multiModuleProjectDirectory system
-     * properties NmvnLauncher already established for the native side.
+     * Boots the in-process HotSpot JVM. {@code java.class.path} is the extracted wrapper jar plus
+     * {@code $MAVEN_HOME/boot/*.jar} (classworlds). Maven types load from the m2.conf realm.
      */
     private static JVM boot() throws IOException {
         var javaHome = System.getProperty("java.home");
@@ -230,15 +232,7 @@ final class HotspotMavenRunner {
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
-        // java.class.path = boot/* ONLY — the stock mvn script's topology. boot/ carries
-        // classworlds plus nmvn-hotspot-main.jar (the wrapper; the dist assembly puts it there
-        // precisely because boot/ is on the app classpath but NOT loaded into the m2.conf realm).
-        // Maven proper defines inside the plexus.core realm, exactly as under bin/mvn. Do NOT
-        // add lib/* here and do NOT move the wrapper into a lib/ jar: classworlds realms delegate
-        // PARENT-FIRST, so any realm-visible jar that also sits on the app classpath gets
-        // hijacked to the app loader — tried with the wrapper inside maven-cli.jar, which died
-        // with NoClassDefFoundError: MessageBuilderFactory from an app-loader-defined MavenCling.
-        var classpath = new StringBuilder();
+        var classpath = new StringBuilder(extractWrapper().toString());
         appendToCp(new File(mavenHome, "boot"), classpath);
         var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
@@ -250,6 +244,24 @@ final class HotspotMavenRunner {
         }
         LOG.info("nmvn: booting in-process HotSpot JVM from {} for non-baked plugins", javaHome);
         return JVM.create(new File(javaHome), options.toArray(new String[0]));
+    }
+
+    /**
+     * Writes the wrapper jar (baked into the image as a resource) to a temp file on the child
+     * HotSpot classpath. {@code boot()} runs once per process, so this is one file, deleted on
+     * normal exit.
+     */
+    private static Path extractWrapper() throws IOException {
+        Path jarFile = Files.createTempFile("nmvn-hotspot-main", ".jar");
+        jarFile.toFile().deleteOnExit();
+        try (InputStream in = HotspotMavenRunner.class.getClassLoader().getResourceAsStream(WRAPPER_JAR_RESOURCE)) {
+            if (in == null) {
+                throw new IOException("Resource " + WRAPPER_JAR_RESOURCE + " not baked into the image"
+                        + " — missing -H:IncludeResources='nmvn/hotspot/.*'?");
+            }
+            Files.copy(in, jarFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+        return jarFile;
     }
 
     private static void appendToCp(File dirWithJars, StringBuilder collectTo) throws IOException {

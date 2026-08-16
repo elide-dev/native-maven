@@ -9,11 +9,8 @@
   <artifactId>nmvn-hotspot-main</artifactId>
   <packaging>jar</packaging>
   <name>nmvn HotSpot-side Launcher</name>
-  <!-- ONE class: the entry point HotspotMavenRunner executes inside the in-process HotSpot JVM.
-       The dist assembly places this jar in boot/ (NOT lib/): boot/ is on the delegated JVM's
-       java.class.path but is not loaded into the m2.conf realm, so the wrapper is findable by
-       JNI FindClass while Maven proper still defines inside the plexus.core realm — the exact
-       topology of the stock mvn script. Keep this module's dependencies at classworlds + JDK. -->
+  <!-- Child-JVM entry point. classworlds + JDK only: this jar is loaded by the
+       app loader, not the m2.conf realm. -->
   <dependencies>
     <dependency>
       <groupId>org.codehaus.plexus</groupId>

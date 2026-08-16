@@ -37,14 +37,6 @@ under the License.
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-cli</artifactId>
     </dependency>
-    <!-- nmvn: HotSpot-side entry point of the native image's JVM fallback. Placed in boot/ by
-         the assembly (see component.xml) — must be findable by the delegated JVM's app loader
-         but must NOT be loaded into the m2.conf realm. -->
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>nmvn-hotspot-main</artifactId>
-      <version>${project.version}</version>
-    </dependency>
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-embedder</artifactId>

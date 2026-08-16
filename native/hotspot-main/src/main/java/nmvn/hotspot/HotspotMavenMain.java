@@ -40,16 +40,10 @@ import org.codehaus.plexus.classworlds.launcher.Launcher;
  * delegated goal of the whole build and re-loading the Maven realm per goal would only burn
  * metaspace and time.
  *
- * <p>This class ships as its own tiny jar in the distribution's {@code boot/} directory —
- * deliberately NOT in {@code lib/}. {@code boot/} is on the delegated JVM's
- * {@code java.class.path} (so JNI {@code FindClass} finds this class) but is not loaded into the
- * m2.conf realm, so Maven proper still defines inside the {@code plexus.core} realm: the exact
- * topology of the stock {@code mvn} script. Two constraints follow. (1) This module must
- * reference nothing beyond classworlds and the JDK. (2) The class must never move into a
- * realm-loaded jar: classworlds realms delegate PARENT-FIRST, so a realm-visible jar that also
- * sits on the app classpath gets hijacked to the app loader — tried with the wrapper inside
- * maven-cli.jar, which died with {@code NoClassDefFoundError: MessageBuilderFactory} from an
- * app-loader-defined MavenCling.
+ * <p>Ships as {@code nmvn-hotspot-main.jar}, baked into the native image as a resource and
+ * extracted onto the child JVM's app classpath (with {@code $MAVEN_HOME/boot}). Depends only
+ * on classworlds and the JDK — Maven types load from the m2.conf realm. The jar must not also
+ * sit on a realm load path ({@code lib/}): classworlds is parent-first.
  */
 public final class HotspotMavenMain {
 

@@ -33,26 +33,22 @@ lifecycle ordering).
 
 ## How it works
 
-Two classes in the `prebuilt-feature` sidecar, plus the HotSpot-side entry point in its own tiny
-module (`native/hotspot-main`), shipped by the dist assembly as `boot/nmvn-hotspot-main-*.jar` —
-loadable by the delegated JVM's app loader without entering the m2.conf realm:
+Two classes in the `prebuilt-feature` sidecar, plus the HotSpot-side entry point in its own
+tiny module (`native/hotspot-main`). That module is **not** part of the Maven dist: the sidecar
+bakes `nmvn-hotspot-main.jar` as an image resource and `HotspotMavenRunner` extracts it onto
+the child JVM's app classpath.
 
 | Class | Role |
 |---|---|
 | `nmvn.JvmFallbackBuildPluginManager` | `@Priority(10)` override of `DefaultBuildPluginManager` (same seam pattern as the descriptor/realm cache overrides). In `executeMojo`, re-uses `PrebuiltPluginRealms.route(...)`: baked → stock path (served from the image heap); anything else → delegate. Runs the delegation at the mojo's exact slot in the lifecycle plan, interleaved with baked mojos. |
 | `nmvn.HotspotMavenRunner` | Boots the HotSpot JVM **lazily, once per process** (HotSpot allows a single `JNI_CreateJavaVM`; no re-create after failure) and builds the delegated command line. Forwards user properties (minus Maven-injected `session.*`), user settings, non-default global settings, local repo, offline flag, active profiles. |
-| `org.apache.maven.cling.HotspotMavenMain` | The HotSpot-side entry point. Calls classworlds `Launcher.launch()` — **not** `main`, because Maven's exiting entry points would `System.exit` the shared process — and reports the exit code through a temp file (a JNI void call has no return channel; `executeMain` swallows JVM-side exceptions). The `Launcher` is configured once from `m2.conf` and reused across goals. It is packaged into a JAR inside of Maven distribution to be loadable for HotSpot JVM.
+| `nmvn.hotspot.HotspotMavenMain` | The HotSpot-side entry point. Calls classworlds `Launcher.launch()` — **not** `main`, because Maven's exiting entry points would `System.exit` the shared process — and reports the exit code through a temp file (a JNI void call has no return channel; `executeMain` swallows JVM-side exceptions). The `Launcher` is configured once from `m2.conf` and reused across goals. Lives in `nmvn-hotspot-main.jar` so it can grow past a single class file. |
 
-Boot shape mirrors the `mvn` script exactly: `java.class.path` =
-`$MAVEN_HOME/boot/*.jar` only (classworlds + the wrapper jar); Maven proper
-defines inside the plexus.core realm from m2.conf. The wrapper must stay in
-`boot/`, never in a `lib/` jar — classworlds realms delegate parent-first, so
-a realm-visible jar on the app classpath gets hijacked to the app loader
-(tried with the wrapper inside maven-cli.jar: NoClassDefFoundError on the
-maven-api types from an app-loader-defined MavenCling). Plus
-`-Dclassworlds.conf=$MAVEN_HOME/bin/m2.conf` and
-`maven.home`/`maven.multiModuleProjectDirectory` carried over from the values
-NmvnLauncher already established.
+Boot shape: classpath = extracted wrapper jar + `$MAVEN_HOME/boot/*.jar` (classworlds),
+`-Dclassworlds.conf=$MAVEN_HOME/bin/m2.conf`, `maven.home` /
+`maven.multiModuleProjectDirectory` carried over from the values NmvnLauncher already
+established. Maven types load from the m2.conf realm (`lib/`), not the app loader. The
+wrapper jar must stay off that realm: classworlds is parent-first.
 
 ### Toggle
 
@@ -84,11 +80,14 @@ NmvnLauncher already established.
   hard-require GraalVM 25+ anyway.
 - the jvm-channel jar reaches the image classpath as an `--extra-cp` argument
   of the generate-realm-spec mojo (see the launcher pom's `native` profile);
-  its bundled `native-image.properties` self-registers everything else. The
-  `-H:IncludeResources=nmvn/hotspot/.*` pattern for the wrapper bytecode lives
-  in the sidecar's own
-  `META-INF/native-image/org.apache.maven/nmvn-sidecar/native-image.properties`
-  together with the other static image flags.
+  its bundled `native-image.properties` self-registers everything else.
+- `native/hotspot-main` is a provided dependency of the sidecar (reactor
+  order only). The sidecar copies that module's `target/*.jar` — not the
+  `~/.m2` artifact — to `nmvn/hotspot/nmvn-hotspot-main.jar` so a
+  `-pl native/prebuilt-feature` without `-am` fails instead of baking a
+  stale wrapper. The `-H:IncludeResources=nmvn/hotspot/.*` pattern that
+  bakes that jar into the image lives in the sidecar's
+  `META-INF/native-image/org.apache.maven/nmvn-sidecar/native-image.properties`.
 
 ## How to test
 
