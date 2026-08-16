@@ -40,9 +40,10 @@ import org.codehaus.plexus.classworlds.launcher.Launcher;
  * delegated goal of the whole build and re-loading the Maven realm per goal would only burn
  * metaspace and time.
  *
- * <p>CONSTRAINT: this class is baked into the image as a RESOURCE, extracted to a temp directory
- * at runtime, and must remain the compilation unit's ONLY class file — no lambdas, no anonymous or
- * nested classes (the extractor copies exactly one {@code .class} entry).
+ * <p>Ships as {@code nmvn-hotspot-main.jar}, baked into the native image as a resource and
+ * extracted onto the child JVM's app classpath (with {@code $MAVEN_HOME/boot}). Depends only
+ * on classworlds and the JDK — Maven types load from the m2.conf realm. The jar must not also
+ * sit on a realm load path ({@code lib/}): classworlds is parent-first.
  */
 public final class HotspotMavenMain {
 

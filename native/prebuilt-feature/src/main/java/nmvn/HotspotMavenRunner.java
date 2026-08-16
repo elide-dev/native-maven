@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -62,8 +63,10 @@ final class HotspotMavenRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
 
-    /** Binary name of the HotSpot-side wrapper main; its bytecode is baked as an image resource. */
+    /** Binary name of the HotSpot-side wrapper main; its jar is baked as an image resource. */
     private static final String MAIN_CLASS = "nmvn.hotspot.HotspotMavenMain";
+
+    private static final String WRAPPER_JAR_RESOURCE = "nmvn/hotspot/nmvn-hotspot-main.jar";
 
     /** @GuardedBy("HotspotMavenRunner.class") — see "one JVM per process" above. */
     private static JVM jvm;
@@ -220,27 +223,18 @@ final class HotspotMavenRunner {
     }
 
     /**
-     * Boots the HotSpot JVM with the same shape the {@code mvn} script uses: classpath =
-     * {@code $MAVEN_HOME/boot/*.jar} (classworlds) plus the extracted wrapper, m2.conf as the
-     * classworlds configuration, and the maven.home/maven.multiModuleProjectDirectory system
-     * properties NmvnLauncher already established for the native side.
+     * Boots the in-process HotSpot JVM. {@code java.class.path} is the extracted wrapper jar plus
+     * {@code $MAVEN_HOME/boot/*.jar} (classworlds). Maven types load from the m2.conf realm.
      */
     private static JVM boot() throws IOException {
-        String javaHome = System.getProperty("java.home");
-        String mavenHome = System.getProperty("maven.home");
+        var javaHome = System.getProperty("java.home");
+        var mavenHome = System.getProperty("maven.home");
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
-        File bootDir = new File(mavenHome, "boot");
-        File[] bootJars = bootDir.listFiles((dir, name) -> name.endsWith(".jar"));
-        if (bootJars == null || bootJars.length == 0) {
-            throw new IOException("No classworlds jar under " + bootDir);
-        }
-        StringBuilder classpath = new StringBuilder(extractWrapper().toString());
-        for (File jar : bootJars) {
-            classpath.append(File.pathSeparatorChar).append(jar.getAbsolutePath());
-        }
-        List<String> options = new ArrayList<>();
+        var classpath = new StringBuilder(extractWrapper().toString());
+        appendToCp(new File(mavenHome, "boot"), classpath);
+        var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
         options.add("-Dmaven.home=" + mavenHome);
         options.add("-Dclassworlds.conf=" + new File(new File(mavenHome, "bin"), "m2.conf"));
@@ -253,22 +247,33 @@ final class HotspotMavenRunner {
     }
 
     /**
-     * Writes the wrapper main's bytecode (baked into the image as a resource — see the
-     * IncludeResources pattern in build-nmvn-prebuilt.sh) into a temp directory that goes on the
-     * HotSpot classpath. The wrapper is a SINGLE class file by contract (see its javadoc).
+     * Writes the wrapper jar (baked into the image as a resource) to a temp file on the child
+     * HotSpot classpath. {@code boot()} runs once per process, so this is one file, deleted on
+     * normal exit.
      */
     private static Path extractWrapper() throws IOException {
-        String resource = MAIN_CLASS.replace('.', '/') + ".class";
-        Path dir = Files.createTempDirectory("nmvn-jvm-boot");
-        Path classFile = dir.resolve(resource);
-        Files.createDirectories(classFile.getParent());
-        try (InputStream in = HotspotMavenRunner.class.getClassLoader().getResourceAsStream(resource)) {
+        Path jarFile = Files.createTempFile("nmvn-hotspot-main", ".jar");
+        jarFile.toFile().deleteOnExit();
+        try (InputStream in = HotspotMavenRunner.class.getClassLoader().getResourceAsStream(WRAPPER_JAR_RESOURCE)) {
             if (in == null) {
-                throw new IOException("Resource " + resource + " not baked into the image"
-                        + " — missing -H:IncludeResources='nmvn/hotspot/.*' in the build script?");
+                throw new IOException("Resource " + WRAPPER_JAR_RESOURCE + " not baked into the image"
+                        + " — missing -H:IncludeResources='nmvn/hotspot/.*'?");
             }
-            Files.copy(in, classFile);
+            Files.copy(in, jarFile, StandardCopyOption.REPLACE_EXISTING);
         }
-        return dir;
+        return jarFile;
+    }
+
+    private static void appendToCp(File dirWithJars, StringBuilder collectTo) throws IOException {
+        var jars = dirWithJars.listFiles((dir, name) -> name.endsWith(".jar"));
+        if (jars == null || jars.length == 0) {
+            throw new IOException("No jars under " + dirWithJars);
+        }
+        for (var jar : jars) {
+            if (!collectTo.isEmpty()) {
+                collectTo.append(File.pathSeparatorChar);
+            }
+            collectTo.append(jar.getAbsolutePath());
+        }
     }
 }

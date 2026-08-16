@@ -10,6 +10,7 @@
   <packaging>pom</packaging>
   <name>Native Maven</name>
   <modules>
+    <module>hotspot-main</module>
     <module>prebuilt-feature</module>
     <module>sanitize</module>
     <module>launcher</module>

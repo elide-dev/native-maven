@@ -8,6 +8,9 @@
   </parent>
   <artifactId>prebuilt-feature</artifactId>
   <packaging>jar</packaging>
+  <properties>
+    <nmvn.hotspotMain.jar>${project.basedir}/../hotspot-main/target/nmvn-hotspot-main-${project.version}.jar</nmvn.hotspotMain.jar>
+  </properties>
   <dependencies>
     <dependency>
       <groupId>org.apache.maven</groupId>
@@ -39,5 +42,45 @@
       <artifactId>org.eclipse.sisu.inject</artifactId>
       <scope>provided</scope>
     </dependency>
+    <!-- provided: `-am` reactor order only. Not packaged (jar plugin skips provided);
+         image -cp is sidecar jar + jvm-channel + dist, so these classes stay off it. -->
+    <dependency>
+      <groupId>org.apache.maven</groupId>
+      <artifactId>nmvn-hotspot-main</artifactId>
+      <version>${project.version}</version>
+      <scope>provided</scope>
+    </dependency>
   </dependencies>
+  <build>
+    <plugins>
+      <!-- Sibling target/, not ~/.m2: a missing jar fails instead of baking a stale wrapper. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>copy-hotspot-main-jar</id>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <phase>prepare-package</phase>
+            <configuration>
+              <target>
+                <fail message="Missing ${nmvn.hotspotMain.jar} — build native/hotspot-main first (use -am).">
+                  <condition>
+                    <not>
+                      <available file="${nmvn.hotspotMain.jar}" />
+                    </not>
+                  </condition>
+                </fail>
+                <mkdir dir="${project.build.outputDirectory}/nmvn/hotspot" />
+                <copy file="${nmvn.hotspotMain.jar}" overwrite="true" tofile="${project.build.outputDirectory}/nmvn/hotspot/nmvn-hotspot-main.jar" />
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

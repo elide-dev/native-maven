@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.apache.maven</groupId>
+    <artifactId>native</artifactId>
+    <version>4.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>nmvn-hotspot-main</artifactId>
+  <packaging>jar</packaging>
+  <name>nmvn HotSpot-side Launcher</name>
+  <!-- Child-JVM entry point. classworlds + JDK only: this jar is loaded by the
+       app loader, not the m2.conf realm. -->
+  <dependencies>
+    <dependency>
+      <groupId>org.codehaus.plexus</groupId>
+      <artifactId>plexus-classworlds</artifactId>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>
