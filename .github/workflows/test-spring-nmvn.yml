@@ -212,6 +212,52 @@ jobs:
             --variant "${{ matrix.variant }}" \
             --keep-going
 
+      - name: Exercise the JVM fallback (delegated non-baked goal)
+        if: ${{ matrix.variant == 'non-crema' }}
+        run: |
+          set -euo pipefail
+
+          # maven-help-plugin is never part of a catalog, so this goal is guaranteed to route
+          # DYNAMIC and must run via the in-process HotSpot JVM (the fallback).
+          NON_BAKED_GOAL="org.apache.maven.plugins:maven-help-plugin:3.4.0:evaluate"
+
+          # The binary needs MAVEN_HOME at run time (m2.conf, boot jars); Windows java wants C:/.
+          MAVEN_HOME="$PWD/apache-maven/target/apache-maven-4.1.0-SNAPSHOT"
+          if command -v cygpath >/dev/null 2>&1; then
+            MAVEN_HOME="$(cygpath -m "$MAVEN_HOME")"
+          fi
+          export MAVEN_HOME
+
+          BINARY="$PWD/${NMVN_BIN}"
+
+          # Guard for the linux-hide-static-jdk-symbols profile (native/launcher/pom.xml): if the
+          # image dynamically exports the statically-linked JDK's JNU_* symbols again, the child
+          # HotSpot's libjava.so binds to them and dies during boot — fail here with the real
+          # reason instead of the downstream NPE.
+          if [ "$RUNNER_OS" = "Linux" ] && nm -D "$BINARY" 2>/dev/null | grep -q " JNU_"; then
+            nm -D "$BINARY" | grep " JNU_"
+            echo "::error::image exports JNU_* symbols — --exclude-libs,ALL stopped working, the JVM fallback child will crash"
+            exit 1
+          fi
+
+          cd examples/java-maven-sample-project
+
+          if ! OUT="$("$BINARY" "$NON_BAKED_GOAL" -Dexpression=maven.version -DforceStdout 2>&1)"; then
+            echo "$OUT"
+            echo "::error::delegated goal failed — the fallback (wrapper/classpath/JVM boot) is broken"
+            exit 1
+          fi
+
+          # Success alone is not enough: it must have succeeded VIA the fallback. Without this
+          # check, baking help-plugin someday would silently turn this test into a no-op.
+          if ! echo "$OUT" | grep -q "running .* on HotSpot JVM"; then
+            echo "$OUT"
+            echo "::error::goal did not delegate — the fallback path was not exercised"
+            exit 1
+          fi
+
+          echo ">>> JVM fallback exercised OK"
+
       - name: Clean workspace outputs
         if: always()
         run: rm -rf build

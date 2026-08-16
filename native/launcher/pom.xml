@@ -189,34 +189,6 @@
       <build>
         <plugins>
           <plugin>
-            <groupId>org.apache.maven</groupId>
-            <artifactId>sanitize-maven-plugin</artifactId>
-            <version>${project.version}</version>
-            <executions>
-              <execution>
-                <id>generate-realm-spec</id>
-                <goals>
-                  <goal>generate-realm-spec</goal>
-                </goals>
-                <phase>prepare-package</phase>
-                <configuration>
-                  <mavenHome>${nmvn.mavenHome}</mavenHome>
-                  <work>${project.build.directory}/nmvn</work>
-                  <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
-                  <extraCp>
-                    <!-- should use dependencies rather than JARs -->
-                    <dependency>org.apache.maven:prebuilt-feature:${project.version}</dependency>
-                    <dependency>org.apidesign.graalvm:jvm-channel:${jvmChannelVersion}</dependency>
-                  </extraCp>
-                  <plugins>
-                    <argument>${nmvn.plugins}</argument>
-                  </plugins>
-                  <pluginsFile>${nmvn.pluginsFile}</pluginsFile>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-          <plugin>
             <groupId>org.graalvm.buildtools</groupId>
             <artifactId>native-maven-plugin</artifactId>
             <configuration>
@@ -258,6 +230,53 @@
                   <goal>compile-no-fork</goal>
                 </goals>
                 <phase>package</phase>
+              </execution>
+            </executions>
+          </plugin>
+          <!-- Declared AFTER native-maven-plugin ON PURPOSE: within one phase Maven runs
+               executions in plugin declaration order, and strip-pe-exports (package) must run on
+               the image the native build just produced. generate-realm-spec is bound to
+               prepare-package — an earlier phase — so it still runs before the image build
+               regardless of where this plugin is declared. -->
+          <plugin>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>sanitize-maven-plugin</artifactId>
+            <version>${project.version}</version>
+            <executions>
+              <execution>
+                <id>generate-realm-spec</id>
+                <goals>
+                  <goal>generate-realm-spec</goal>
+                </goals>
+                <phase>prepare-package</phase>
+                <configuration>
+                  <mavenHome>${nmvn.mavenHome}</mavenHome>
+                  <work>${project.build.directory}/nmvn</work>
+                  <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
+                  <extraCp>
+                    <!-- should use dependencies rather than JARs -->
+                    <dependency>org.apache.maven:prebuilt-feature:${project.version}</dependency>
+                    <dependency>org.apidesign.graalvm:jvm-channel:${jvmChannelVersion}</dependency>
+                  </extraCp>
+                  <plugins>
+                    <argument>${nmvn.plugins}</argument>
+                  </plugins>
+                  <pluginsFile>${nmvn.pluginsFile}</pluginsFile>
+                </configuration>
+              </execution>
+              <!-- Windows counterpart of the linux-hide-static-jdk-symbols profile below: drops
+                   the .exe's PE export table (JNI_OnLoad_zip/nio/net from the statically linked
+                   JDK libs) so the JVM-fallback child HotSpot cannot bind to the image's native
+                   code. Skipped on other OSes; on Windows a missing .exe fails the build. -->
+              <execution>
+                <id>strip-pe-exports</id>
+                <goals>
+                  <goal>strip-pe-exports</goal>
+                </goals>
+                <phase>package</phase>
+                <configuration>
+                  <binary>${project.build.directory}/${nmvn.imageName}.exe</binary>
+                </configuration>
               </execution>
             </executions>
           </plugin>
@@ -314,6 +333,43 @@
                 <buildArg>-H:Preserve=package=org.fusesource.*</buildArg>
                 <buildArg>-H:Preserve=package=org.jline.*</buildArg>
                 <buildArg>-H:Preserve=package=javax.inject.*</buildArg>
+              </buildArgs>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <!-- OS MODIFIER — activates by itself on Linux, on top of whatever -P profiles run.
+         The image statically links the JDK's native libraries (libjava.a, ...) and, without
+         this flag, their JNIEXPORT symbols (JNU_NewStringPlatform, JNU_GetStringPlatformChars,
+         ...) land in the executable's DYNAMIC symbol table. ELF resolution lets executable
+         exports interpose shared-library-internal calls, so the JVM-fallback child HotSpot's
+         own libjava.so binds those calls to the IMAGE's copies — whose cached String field IDs
+         belong to the image's JNI world, killing the child during boot-layer classpath
+         canonicalization ("Static field ID passed to JNI" under -Xcheck:jni; an
+         ExceptionInInitializerError/NPE without it; PR #37/#38 CI). GNU ld's exclude-libs=ALL
+         keeps static-archive symbols out of .dynsym; the image's own JNI keeps working (Java_* were
+         never dynamically exported on Linux) and the deliberate exports (JNI_CreateJavaVM,
+         graal_*, the jvm-channel Channel entry point) are generated objects, not archive
+         members, so they stay. Windows has the same disease via its PE exports
+         (JNI_OnLoad_zip/nio/net → JEP 178 static-linking detection in the child) but no
+         equivalent linker switch — still unfixed there. macOS needs nothing: two-level
+         namespace binding never interposes. -->
+    <profile>
+      <id>linux-hide-static-jdk-symbols</id>
+      <activation>
+        <os>
+          <name>linux</name>
+        </os>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <buildArgs combine.children="append">
+                <buildArg>-H:NativeLinkerOption=-Wl,--exclude-libs,ALL</buildArg>
               </buildArgs>
             </configuration>
           </plugin>
