@@ -28,7 +28,7 @@
     </dependency>
     <dependency>
       <groupId>org.apidesign.graalvm</groupId>
-      <artifactId>jvm-channel</artifactId>
+      <artifactId>jvm-interop</artifactId>
       <version>${jvmChannelVersion}</version>
     </dependency>
     <dependency>

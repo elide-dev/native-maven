@@ -19,13 +19,13 @@
 package nmvn.hotspot;
 
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 
+import org.codehaus.plexus.classworlds.launcher.ConfigurationException;
 import org.codehaus.plexus.classworlds.launcher.Launcher;
+import org.codehaus.plexus.classworlds.realm.DuplicateRealmException;
+import org.codehaus.plexus.classworlds.realm.NoSuchRealmException;
 
 /**
  * Entry point executed on the HOTSPOT side of the in-process JVM fallback (see
@@ -46,36 +46,24 @@ import org.codehaus.plexus.classworlds.launcher.Launcher;
  * sit on a realm load path ({@code lib/}): classworlds is parent-first.
  */
 public final class HotspotMavenMain {
-
-    /** Configured once, reused for every delegated goal. */
-    private static Launcher launcher;
+    /** Configured once, reused for every delegated goal.
+     */
+    private static final Launcher launcher;
+    static {
+        Launcher configured = new Launcher();
+        configured.setSystemClassLoader(HotspotMavenMain.class.getClassLoader());
+        String conf = System.getProperty("classworlds.conf");
+        try (InputStream in = new FileInputStream(conf)) {
+            configured.configure(in);
+        } catch (IOException | DuplicateRealmException | NoSuchRealmException | ConfigurationException ex) {
+            throw new IllegalStateException(ex);
+        }
+        launcher = configured;
+    }
 
     private HotspotMavenMain() {}
 
-    public static void main(String[] args) {
-        int exitCode = 1;
-        try {
-            exitCode = run(Arrays.copyOfRange(args, 1, args.length));
-        } catch (Throwable t) {
-            t.printStackTrace();
-        }
-        try (OutputStream out = new FileOutputStream(args[0])) {
-            out.write(Integer.toString(exitCode).getBytes(StandardCharsets.UTF_8));
-        } catch (Throwable t) {
-            t.printStackTrace();
-        }
-    }
-
-    private static synchronized int run(String[] mavenArgs) throws Exception {
-        if (launcher == null) {
-            Launcher configured = new Launcher();
-            configured.setSystemClassLoader(HotspotMavenMain.class.getClassLoader());
-            String conf = System.getProperty("classworlds.conf");
-            try (InputStream in = new FileInputStream(conf)) {
-                configured.configure(in);
-            }
-            launcher = configured;
-        }
+    public static synchronized int run(String[] mavenArgs) throws Exception {
         // launch() invokes m2.conf's enhanced main — MavenCling.main(args, world) — which RETURNS
         // its exit code instead of calling System.exit (same seam NmvnLauncher uses natively).
         launcher.launch(mavenArgs);

@@ -32,6 +32,8 @@ import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.plugin.MojoExecution;
 import org.apidesign.jvm.channel.JVM;
+import org.apidesign.jvm.interop.OtherJvmClassLoader;
+import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +45,7 @@ import org.slf4j.LoggerFactory;
  * from the already-required {@code MAVEN_HOME} dist, against the current project's pom.
  *
  * <p><b>One JVM per process.</b> HotSpot permits a single {@code JNI_CreateJavaVM} per process
- * and cannot be re-created after destruction, so the JVM is created lazily on the first delegated
+ * and cannot be re-created after destruction, so the JV že ji bude potřebovatM is created lazily on the first delegated
  * goal and reused for all others (the HotSpot-side {@code nmvn.hotspot.HotspotMavenMain} likewise
  * configures its classworlds Launcher once and reuses it).
  *
@@ -70,6 +72,8 @@ final class HotspotMavenRunner {
 
     /** @GuardedBy("HotspotMavenRunner.class") — see "one JVM per process" above. */
     private static JVM jvm;
+    /** @GuardedBy("HotspotMavenRunner.class") — only one class per {@link #jvm} */
+    private static Value clazzHotSpotMavenMain;
 
     private static IllegalStateException bootFailure;
 
@@ -97,12 +101,9 @@ final class HotspotMavenRunner {
         List<String> args = buildArgs(session, mojoExecution);
         Path exitFile = Files.createTempFile("nmvn-jvm-exit", ".txt");
         try {
-            List<String> mainArgs = new ArrayList<>();
-            mainArgs.add(exitFile.toString());
-            mainArgs.addAll(args);
             LOG.info("nmvn: running {} on HotSpot JVM: mvn {}", mojoExecution, String.join(" ", args));
-            jvm().executeMain(MAIN_CLASS.replace('.', '/'), mainArgs.toArray(new String[0]));
-            int exitCode = readExitCode(exitFile);
+            var code = hotSpotMavenMain().invokeMember("run", args.toArray());
+            int exitCode = code.asInt();
             if (exitCode != 0) {
                 throw new HotspotGoalFailedException(
                         "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
@@ -116,20 +117,6 @@ final class HotspotMavenRunner {
     static final class HotspotGoalFailedException extends RuntimeException {
         HotspotGoalFailedException(String message) {
             super(message);
-        }
-    }
-
-    private static int readExitCode(Path exitFile) throws IOException {
-        String content = Files.readString(exitFile).trim();
-        if (content.isEmpty()) {
-            // The wrapper writes the file even on Throwable; nothing at all means the JVM-side
-            // main never ran to completion (e.g. a JNI-level failure executeMain cannot report).
-            throw new IOException("HotSpot JVM reported no exit code — wrapper main did not complete");
-        }
-        try {
-            return Integer.parseInt(content);
-        } catch (NumberFormatException e) {
-            throw new IOException("Unparseable exit code from HotSpot JVM: '" + content + "'");
         }
     }
 
@@ -220,6 +207,14 @@ final class HotspotMavenRunner {
             }
         }
         return jvm;
+    }
+
+    private static synchronized Value hotSpotMavenMain() throws IOException {
+        if (clazzHotSpotMavenMain == null) {
+            var loader = OtherJvmClassLoader.create(jvm());
+            clazzHotSpotMavenMain = loader.loadClass(MAIN_CLASS);
+        }
+        return clazzHotSpotMavenMain;
     }
 
     /**
