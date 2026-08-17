@@ -98,11 +98,12 @@ final class HotspotMavenRunner {
      * @throws HotspotGoalFailedException when the delegated Maven invocation returns non-zero
      */
     static synchronized void execute(MavenSession session, MojoExecution mojoExecution) throws IOException {
-        List<String> args = buildArgs(session, mojoExecution);
+        var args = buildArgs(session, mojoExecution);
         Path exitFile = Files.createTempFile("nmvn-jvm-exit", ".txt");
         try {
             LOG.info("nmvn: running {} on HotSpot JVM: mvn {}", mojoExecution, String.join(" ", args));
-            var code = hotSpotMavenMain().invokeMember("run", args.toArray());
+            final Object singleArrayArg = args.toArray();
+            var code = hotSpotMavenMain().invokeMember("run", singleArrayArg);
             int exitCode = code.asInt();
             if (exitCode != 0) {
                 throw new HotspotGoalFailedException(
