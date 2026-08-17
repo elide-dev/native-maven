@@ -49,6 +49,7 @@ public final class HotspotMavenMain {
     /** Configured once, reused for every delegated goal.
      */
     private static final Launcher launcher;
+
     static {
         Launcher configured = new Launcher();
         configured.setSystemClassLoader(HotspotMavenMain.class.getClassLoader());

@@ -151,6 +151,11 @@
       <artifactId>truffle-api</artifactId>
       <version>25.1.3</version>
     </dependency>
+    <dependency>
+      <groupId>org.apache.maven</groupId>
+      <artifactId>nmvn-hotspot-main</artifactId>
+      <version>${project.version}</version>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
@@ -382,5 +387,61 @@
         </plugins>
       </build>
     </profile>
+
+    <profile>
+      <id>create-distribution-in-dir</id>
+      <activation>
+        <property>
+          <name>distributionTargetDir</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-clean-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>clean-target-dir</id>
+                <goals>
+                  <goal>clean</goal>
+                </goals>
+                <phase>prepare-package</phase>
+                <configuration>
+                  <excludeDefaultDirectories>true</excludeDefaultDirectories>
+                  <filesets>
+                    <fileset>
+                      <directory>${distributionTargetDir}/nmvn-boot</directory>
+                    </fileset>
+                  </filesets>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <artifactId>maven-assembly-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>create-distribution-dir</id>
+                <goals>
+                  <goal>single</goal>
+                </goals>
+                <phase>package</phase>
+                <configuration>
+                  <finalName>./</finalName>
+                  <appendAssemblyId>false</appendAssemblyId>
+                  <attach>false</attach>
+                  <outputDirectory>${distributionTargetDir}/nmvn-boot</outputDirectory>
+                  <descriptors>
+                    <descriptor>src/assembly/dir.xml</descriptor>
+                  </descriptors>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
   </profiles>
 </project>

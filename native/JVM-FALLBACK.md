@@ -33,16 +33,20 @@ lifecycle ordering).
 
 ## How it works
 
-Two classes in the `prebuilt-feature` sidecar, plus the HotSpot-side entry point in its own
-tiny module (`native/hotspot-main`). That module is **not** part of the Maven dist: the sidecar
-bakes `nmvn-hotspot-main.jar` as an image resource and `HotspotMavenRunner` extracts it onto
-the child JVM's app classpath.
+There is a special directory `nmvn-boot` in the Apache distribution created when
+```
+native-maven$ mvn install -DdistributionTargetDir="$PWD/apache-maven/target/apache-maven-4.1.0-SNAPSHOT"
+```
+is invoked. This directory contains additional JAR files that should be put on classpath when
+launching HotSpot when `--mode=mixed` is used. `HotspotMavenRunner` makes sure the JARs in this
+directory are put on classpath when launching
 
 | Class | Role |
 |---|---|
 | `nmvn.JvmFallbackBuildPluginManager` | `@Priority(10)` override of `DefaultBuildPluginManager` (same seam pattern as the descriptor/realm cache overrides). In `executeMojo`, re-uses `PrebuiltPluginRealms.route(...)`: baked → stock path (served from the image heap); anything else → delegate. Runs the delegation at the mojo's exact slot in the lifecycle plan, interleaved with baked mojos. |
 | `nmvn.HotspotMavenRunner` | Boots the HotSpot JVM **lazily, once per process** (HotSpot allows a single `JNI_CreateJavaVM`; no re-create after failure) and builds the delegated command line. Forwards user properties (minus Maven-injected `session.*`), user settings, non-default global settings, local repo, offline flag, active profiles. |
-| `nmvn.hotspot.HotspotMavenMain` | The HotSpot-side entry point. Calls classworlds `Launcher.launch()` — **not** `main`, because Maven's exiting entry points would `System.exit` the shared process — and reports the exit code through a temp file (a JNI void call has no return channel; `executeMain` swallows JVM-side exceptions). The `Launcher` is configured once from `m2.conf` and reused across goals. Lives in `nmvn-hotspot-main.jar` so it can grow past a single class file. |
+| `nmvn.hotspot.HotspotMavenMain` | The HotSpot-side entry point. Calls classworlds `Launcher.launch()` — **not** `main`, because Maven's exiting entry points would `System.exit` the shared process — and reports the exit code through return value.
+The `Launcher` is configured once from `m2.conf` and reused across goals. Lives in `nmvn-hotspot-main.jar` so it can grow past a single class file. |
 
 Boot shape: classpath = extracted wrapper jar + `$MAVEN_HOME/boot/*.jar` (classworlds),
 `-Dclassworlds.conf=$MAVEN_HOME/bin/m2.conf`, `maven.home` /
@@ -85,9 +89,7 @@ wrapper jar must stay off that realm: classworlds is parent-first.
   order only). The sidecar copies that module's `target/*.jar` — not the
   `~/.m2` artifact — to `nmvn/hotspot/nmvn-hotspot-main.jar` so a
   `-pl native/prebuilt-feature` without `-am` fails instead of baking a
-  stale wrapper. The `-H:IncludeResources=nmvn/hotspot/.*` pattern that
-  bakes that jar into the image lives in the sidecar's
-  `META-INF/native-image/org.apache.maven/nmvn-sidecar/native-image.properties`.
+  stale wrapper.
 
 ## How to test
 
