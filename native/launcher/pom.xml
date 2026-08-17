@@ -146,6 +146,11 @@
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.graalvm.truffle</groupId>
+      <artifactId>truffle-api</artifactId>
+      <version>25.1.3</version>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
@@ -207,9 +212,7 @@
                    deliberately bypasses NBT's module-dependency classpath: the dist is the
                    curated ground truth of what runtime Maven ships, and resolving the module
                    graph instead risks silent skew. -->
-              <classpath>
-                <param>${project.build.outputDirectory}</param>
-              </classpath>
+              <classesDirectory>${project.build.outputDirectory}</classesDirectory>
               <buildArgs>
                 <!-- the argfile holds ONLY the dist-exact image classpath (a build-time glob a
                      pom cannot express); spec.txt/unlinkable.txt exist even when nothing is baked
@@ -222,6 +225,9 @@
                 <buildArg>-Dnmvn.prebuilt.pluginsFile=${project.build.directory}/nmvn/spec.txt</buildArg>
                 <buildArg>-Dnmvn.prebuilt.unlinkable=${project.build.directory}/nmvn/unlinkable.txt</buildArg>
               </buildArgs>
+              <metadataRepository>
+                <enabled>false</enabled>
+              </metadataRepository>
             </configuration>
             <executions>
               <execution>
