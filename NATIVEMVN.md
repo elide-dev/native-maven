@@ -40,6 +40,19 @@ When asked, reply _yes_, the _Native Maven_ support gets downloaded and can be
 used. Next time the downloaded support is used immediatelly and it delivers
 **2x speed ups** when running typical `pom.xml` builds.
 
+
+### All in a Single Binary
+
+Once _Native Maven_ is installed, the `elide` binary becomes the only interface
+one needs to deal with the _Native Maven_. The `elide mvn` command then manages
+everything:
+- downloads the selected _flavor_ ([more bellow](#Flavors))
+- downloads appropriate JVM (e.g. GraalVM) when needed
+- downloads properly tested _Apache Maven_ distribution when needed
+
+The term _"when needed"_ refers to non-native [mode](#Modes). When such a mode
+is selected, it is necessary to have JVM and Maven distribution around.
+
 ## The Cost of the Speed Up
 
 Speeding a JVM application like Maven up isn't easy and it comes at some
@@ -72,9 +85,9 @@ Uses a flavor of _Native Maven_ with support for Spring 4.1.0. Such a flavor
 may work for other types of Maven projects as well, but its plugins are clearly
 optimized for the Spring 4.1.0 technology.
 
-### Mode
+### Modes
 
-Modes tell the _Native Maven_ what shall happen when a particular Maven plugin
+Mode tells the _Native Maven_ what shall happen when a particular Maven plugin
 is needed, but it is not available among the _"baked in"_ plugins. Mode gets
 specified by `--mode` argument. There are following supported values:
 
