@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory;
  * from the already-required {@code MAVEN_HOME} dist, against the current project's pom.
  *
  * <p><b>One JVM per process.</b> HotSpot permits a single {@code JNI_CreateJavaVM} per process
- * and cannot be re-created after destruction, so the JV že ji bude potřebovatM is created lazily on the first delegated
+ * and cannot be re-created after destruction, so the JVM is created lazily on the first delegated
  * goal and reused for all others (the HotSpot-side {@code nmvn.hotspot.HotspotMavenMain} likewise
  * configures its classworlds Launcher once and reuses it).
  *
