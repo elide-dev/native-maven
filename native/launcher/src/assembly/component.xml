@@ -19,15 +19,25 @@ under the License.
 <component xmlns="http://maven.apache.org/ASSEMBLY-COMPONENT/2.1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://maven.apache.org/ASSEMBLY-COMPONENT/2.1.0 http://maven.apache.org/xsd/assembly-component-2.1.0.xsd">
   <dependencySets>
+    <!-- The interop stack (default scope filter = compile+runtime). -->
     <dependencySet>
       <useProjectArtifact>false</useProjectArtifact>
       <outputDirectory>.</outputDirectory>
       <includes>
-        <include>org.apache.maven:nmvn-hotspot-main</include>
         <include>org.apidesign.graalvm:jvm-channel</include>
         <include>org.apidesign.graalvm:jvm-interop</include>
         <include>org.graalvm.polyglot:polyglot</include>
         <include>org.graalvm.truffle:truffle-api</include>
+      </includes>
+    </dependencySet>
+    <!-- The HotSpot-side wrapper: provided in the launcher pom (kept off the image classpath),
+         so it needs its own provided-scoped set — the default set no longer matches it. -->
+    <dependencySet>
+      <useProjectArtifact>false</useProjectArtifact>
+      <outputDirectory>.</outputDirectory>
+      <scope>provided</scope>
+      <includes>
+        <include>org.apache.maven:nmvn-hotspot-main</include>
       </includes>
     </dependencySet>
   </dependencySets>
