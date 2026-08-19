@@ -151,10 +151,15 @@
       <artifactId>truffle-api</artifactId>
       <version>25.2.4</version>
     </dependency>
+    <!-- provided: exists ONLY so the nmvn-boot assembly can copy the jar into the dist (and for
+         -am reactor ordering). This is the HOTSPOT side of the JVM fallback — the child JVM loads
+         it from the dist's nmvn-boot/ at run time; it must never be baked into the image, and
+         provided keeps it off NBT's image classpath (compile+runtime filter). -->
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>nmvn-hotspot-main</artifactId>
       <version>${project.version}</version>
+      <scope>provided</scope>
     </dependency>
   </dependencies>
   <build>
