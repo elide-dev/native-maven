@@ -75,17 +75,12 @@ import org.eclipse.aether.util.filter.DependencyFilterUtils;
  *     LF-terminated) with the same validation the bash/python pipeline performs.</li>
  * <li>Forks the {@link SanitizeRealmJars} JVM (attribute strip + JVMCI link probe) over the spec,
  *     which rewrites it in place and produces {@code unlinkable.txt}.</li>
- * <li>Writes a native-image @argfile with the ONE argument a pom cannot express: the dist-exact
- *     image classpath ({@code boot/*.jar} + {@code lib/*.jar} + the extra jars passed in),
- *     enumerated at build time. All other per-invocation flags are literal {@code <buildArg>}
- *     entries in the launcher's native profile.</li>
  * </ol>
  *
  * <p>Usage (all flags may repeat where noted):
  * <pre>
  *   --maven-home &lt;dist dir&gt;         required
  *   --work &lt;dir&gt;                    required, scratch + outputs (spec.txt, unlinkable.txt, ...)
- *   --argfile &lt;path&gt;                required, image-classpath argfile to write
  *   --extra-cp &lt;path&gt;               repeatable: sidecar jar, jvm-channel jar, ... (image classpath)
  *   --plugins &lt;entries&gt;             optional; entries separated by whitespace/newlines, commas
  *                                     also accepted when no entry carries a '|' dependency key;
@@ -128,9 +123,6 @@ public final class GenerateRealmSpec extends AbstractMojo {
     Path work;
 
     @Parameter
-    Path argfile;
-
-    @Parameter
     List<String> extraCp = new ArrayList<>();
 
     @Parameter
@@ -168,8 +160,8 @@ public final class GenerateRealmSpec extends AbstractMojo {
             pluginsInput.append('\n').append(Files.readString(pluginsFile));
         }
 
-        if (mavenHome == null || work == null || argfile == null) {
-            throw new IllegalArgumentException("mavenHome, work and argfile are required");
+        if (mavenHome == null || work == null) {
+            throw new IllegalArgumentException("mavenHome and work are required");
         }
         if (!Files.isDirectory(mavenHome.resolve("lib"))) {
             throw new IllegalStateException("Not a Maven dist (no lib/): " + mavenHome
@@ -208,8 +200,6 @@ public final class GenerateRealmSpec extends AbstractMojo {
             System.err.println("GenerateRealmSpec: wrote " + specLines.size() + " realm(s) to " + spec);
             runSanitize(imageClasspath(mavenHome, toExtraCp()), spec, work, unlinkable);
         }
-        writeArgfile(argfile, imageClasspath(mavenHome, toExtraCp()));
-        System.err.println("GenerateRealmSpec: wrote image-classpath argfile " + argfile);
     }
 
     /**
@@ -515,26 +505,6 @@ public final class GenerateRealmSpec extends AbstractMojo {
         if (p.waitFor() != 0) {
             throw new IllegalStateException("SanitizeRealmJars failed (see output above)");
         }
-    }
-
-    /**
-     * The native-image @argfile now carries ONLY the image classpath — the one argument a pom
-     * cannot express (a build-time enumeration of the dist's boot/ and lib/ jars). Every other
-     * flag is a literal {@code <buildArg>} in the launcher's native profile, the static set rides
-     * in the sidecar jar's META-INF native-image.properties, and main class / image name come
-     * from the native-maven-plugin configuration.
-     */
-    private static void writeArgfile(Path argfile, List<String> imageClasspath) throws Exception {
-        StringBuilder content = new StringBuilder();
-        for (String arg : new String[] {"-cp", String.join(File.pathSeparator, imageClasspath)}) {
-            // same quoting as the script's write_argfile: quote anything with whitespace/quotes/#
-            if (arg.isEmpty() || arg.matches(".*[\\s\"'].*") || arg.startsWith("#")) {
-                arg = "\"" + arg.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-            }
-            content.append(arg).append('\n');
-        }
-        Files.createDirectories(argfile.toAbsolutePath().getParent());
-        Files.writeString(argfile, content.toString(), StandardCharsets.UTF_8);
     }
 
     private List<Path> toExtraCp() throws MojoExecutionException {

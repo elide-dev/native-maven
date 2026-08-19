@@ -20,10 +20,6 @@ package nmvn;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +28,8 @@ import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.plugin.MojoExecution;
 import org.apidesign.jvm.channel.JVM;
+import org.apidesign.jvm.interop.OtherJvmClassLoader;
+import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,10 +64,10 @@ final class HotspotMavenRunner {
     /** Binary name of the HotSpot-side wrapper main; its jar is baked as an image resource. */
     private static final String MAIN_CLASS = "nmvn.hotspot.HotspotMavenMain";
 
-    private static final String WRAPPER_JAR_RESOURCE = "nmvn/hotspot/nmvn-hotspot-main.jar";
-
     /** @GuardedBy("HotspotMavenRunner.class") — see "one JVM per process" above. */
     private static JVM jvm;
+    /** @GuardedBy("HotspotMavenRunner.class") — only one class per {@link #jvm} */
+    private static Value clazzHotSpotMavenMain;
 
     private static IllegalStateException bootFailure;
 
@@ -94,21 +92,14 @@ final class HotspotMavenRunner {
      * @throws HotspotGoalFailedException when the delegated Maven invocation returns non-zero
      */
     static synchronized void execute(MavenSession session, MojoExecution mojoExecution) throws IOException {
-        List<String> args = buildArgs(session, mojoExecution);
-        Path exitFile = Files.createTempFile("nmvn-jvm-exit", ".txt");
-        try {
-            List<String> mainArgs = new ArrayList<>();
-            mainArgs.add(exitFile.toString());
-            mainArgs.addAll(args);
-            LOG.info("nmvn: running {} on HotSpot JVM: mvn {}", mojoExecution, String.join(" ", args));
-            jvm().executeMain(MAIN_CLASS.replace('.', '/'), mainArgs.toArray(new String[0]));
-            int exitCode = readExitCode(exitFile);
-            if (exitCode != 0) {
-                throw new HotspotGoalFailedException(
-                        "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
-            }
-        } finally {
-            Files.deleteIfExists(exitFile);
+        var args = buildArgs(session, mojoExecution);
+        LOG.info("nmvn: running {} on HotSpot JVM: mvn {}", mojoExecution, String.join(" ", args));
+        final Object singleArrayArg = args.toArray();
+        var code = hotSpotMavenMain().invokeMember("run", singleArrayArg);
+        int exitCode = code.asInt();
+        if (exitCode != 0) {
+            throw new HotspotGoalFailedException(
+                    "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
         }
     }
 
@@ -116,20 +107,6 @@ final class HotspotMavenRunner {
     static final class HotspotGoalFailedException extends RuntimeException {
         HotspotGoalFailedException(String message) {
             super(message);
-        }
-    }
-
-    private static int readExitCode(Path exitFile) throws IOException {
-        String content = Files.readString(exitFile).trim();
-        if (content.isEmpty()) {
-            // The wrapper writes the file even on Throwable; nothing at all means the JVM-side
-            // main never ran to completion (e.g. a JNI-level failure executeMain cannot report).
-            throw new IOException("HotSpot JVM reported no exit code — wrapper main did not complete");
-        }
-        try {
-            return Integer.parseInt(content);
-        } catch (NumberFormatException e) {
-            throw new IOException("Unparseable exit code from HotSpot JVM: '" + content + "'");
         }
     }
 
@@ -222,6 +199,14 @@ final class HotspotMavenRunner {
         return jvm;
     }
 
+    private static synchronized Value hotSpotMavenMain() throws IOException {
+        if (clazzHotSpotMavenMain == null) {
+            var loader = OtherJvmClassLoader.create(jvm());
+            clazzHotSpotMavenMain = loader.loadClass(MAIN_CLASS);
+        }
+        return clazzHotSpotMavenMain;
+    }
+
     /**
      * Boots the in-process HotSpot JVM. {@code java.class.path} is the extracted wrapper jar plus
      * {@code $MAVEN_HOME/boot/*.jar} (classworlds). Maven types load from the m2.conf realm.
@@ -232,8 +217,9 @@ final class HotspotMavenRunner {
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
-        var classpath = new StringBuilder(extractWrapper().toString());
+        var classpath = new StringBuilder();
         appendToCp(new File(mavenHome, "boot"), classpath);
+        appendToCp(new File(mavenHome, "nmvn-boot"), classpath);
         var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
         options.add("-Dmaven.home=" + mavenHome);
@@ -244,24 +230,6 @@ final class HotspotMavenRunner {
         }
         LOG.info("nmvn: booting in-process HotSpot JVM from {} for non-baked plugins", javaHome);
         return JVM.create(new File(javaHome), options.toArray(new String[0]));
-    }
-
-    /**
-     * Writes the wrapper jar (baked into the image as a resource) to a temp file on the child
-     * HotSpot classpath. {@code boot()} runs once per process, so this is one file, deleted on
-     * normal exit.
-     */
-    private static Path extractWrapper() throws IOException {
-        Path jarFile = Files.createTempFile("nmvn-hotspot-main", ".jar");
-        jarFile.toFile().deleteOnExit();
-        try (InputStream in = HotspotMavenRunner.class.getClassLoader().getResourceAsStream(WRAPPER_JAR_RESOURCE)) {
-            if (in == null) {
-                throw new IOException("Resource " + WRAPPER_JAR_RESOURCE + " not baked into the image"
-                        + " — missing -H:IncludeResources='nmvn/hotspot/.*'?");
-            }
-            Files.copy(in, jarFile, StandardCopyOption.REPLACE_EXISTING);
-        }
-        return jarFile;
     }
 
     private static void appendToCp(File dirWithJars, StringBuilder collectTo) throws IOException {

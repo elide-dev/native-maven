@@ -28,7 +28,7 @@
     <dependency>
       <groupId>org.graalvm.sdk</groupId>
       <artifactId>graal-sdk</artifactId>
-      <version>25.1.3</version>
+      <version>25.2.4</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
@@ -146,6 +146,16 @@
       <groupId>org.ow2.asm</groupId>
       <artifactId>asm</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.graalvm.truffle</groupId>
+      <artifactId>truffle-api</artifactId>
+      <version>25.2.4</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.maven</groupId>
+      <artifactId>nmvn-hotspot-main</artifactId>
+      <version>${project.version}</version>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
@@ -194,27 +204,8 @@
             <configuration>
               <imageName>${nmvn.imageName}</imageName>
               <mainClass>nmvn.launcher.NmvnLauncher</mainClass>
-              <!-- Pass args DIRECTLY on every platform. On Windows NBT otherwise wraps all args
-                   into its own argfile, and the native-image driver does not expand an @file
-                   reference NESTED inside another argfile — our @nmvn/native-image.args then
-                   reaches the driver as a literal token and is mistaken for the main class.
-                   Direct passing is safe from cmd.exe's 8191-char limit because the only long
-                   argument (the image classpath) lives inside our own argfile — the same
-                   short-command+@argfile pattern the bash scripts used on Windows. -->
-              <useArgFile>false</useArgFile>
-              <!-- ONLY the launcher classes; the dist-exact rest (boot/ + lib/ + sidecar +
-                   jvm-channel) rides in the argfile's -cp — the driver merges both. This
-                   deliberately bypasses NBT's module-dependency classpath: the dist is the
-                   curated ground truth of what runtime Maven ships, and resolving the module
-                   graph instead risks silent skew. -->
-              <classpath>
-                <param>${project.build.outputDirectory}</param>
-              </classpath>
+              <classesDirectory>${project.build.outputDirectory}</classesDirectory>
               <buildArgs>
-                <!-- the argfile holds ONLY the dist-exact image classpath (a build-time glob a
-                     pom cannot express); spec.txt/unlinkable.txt exist even when nothing is baked
-                     (written empty — PrebuiltPluginRealms reads a blank spec as registry-empty) -->
-                <buildArg>@${project.build.directory}/nmvn/native-image.args</buildArg>
                 <buildArg>-J-XX:MaxRAMPercentage=${nmvn.maxRamPercentage}</buildArg>
                 <buildArg>-Dguice_bytecode_gen_option=DISABLED</buildArg>
                 <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
@@ -222,6 +213,9 @@
                 <buildArg>-Dnmvn.prebuilt.pluginsFile=${project.build.directory}/nmvn/spec.txt</buildArg>
                 <buildArg>-Dnmvn.prebuilt.unlinkable=${project.build.directory}/nmvn/unlinkable.txt</buildArg>
               </buildArgs>
+              <metadataRepository>
+                <enabled>false</enabled>
+              </metadataRepository>
             </configuration>
             <executions>
               <execution>
@@ -252,7 +246,6 @@
                 <configuration>
                   <mavenHome>${nmvn.mavenHome}</mavenHome>
                   <work>${project.build.directory}/nmvn</work>
-                  <argfile>${project.build.directory}/nmvn/native-image.args</argfile>
                   <extraCp>
                     <!-- should use dependencies rather than JARs -->
                     <dependency>org.apache.maven:prebuilt-feature:${project.version}</dependency>
@@ -376,5 +369,61 @@
         </plugins>
       </build>
     </profile>
+
+    <profile>
+      <id>create-distribution-in-dir</id>
+      <activation>
+        <property>
+          <name>distributionTargetDir</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-clean-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>clean-target-dir</id>
+                <goals>
+                  <goal>clean</goal>
+                </goals>
+                <phase>prepare-package</phase>
+                <configuration>
+                  <excludeDefaultDirectories>true</excludeDefaultDirectories>
+                  <filesets>
+                    <fileset>
+                      <directory>${distributionTargetDir}/nmvn-boot</directory>
+                    </fileset>
+                  </filesets>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <artifactId>maven-assembly-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>create-distribution-dir</id>
+                <goals>
+                  <goal>single</goal>
+                </goals>
+                <phase>package</phase>
+                <configuration>
+                  <finalName>./</finalName>
+                  <appendAssemblyId>false</appendAssemblyId>
+                  <attach>false</attach>
+                  <outputDirectory>${distributionTargetDir}/nmvn-boot</outputDirectory>
+                  <descriptors>
+                    <descriptor>src/assembly/dir.xml</descriptor>
+                  </descriptors>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
   </profiles>
 </project>
