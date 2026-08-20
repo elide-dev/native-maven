@@ -60,7 +60,10 @@ All tests live in `nmvn.e2e`; variant- and flavor-specific tests carry
 `@EnabledIf` gates keyed off the self-report. The fallback-contract classes
 (`BuildWithNonBakedPluginsTest`, `FailurePropagationTest`) are non-crema
 only: crema would serve the non-baked plugins by runtime class loading, which
-currently segfaults the binary (`graal-issue-crema-static-fields.md`).
+currently segfaults the binary (`graal-issue-crema-static-fields.md`). The
+mode classes (`NativeModeFailFastTest`, `LegacyModeTest`) are non-crema only
+too — `--mode` is a non-crema feature (NATIVEMVN.md "Modes"), and
+`CremaModeRejectionTest` proves the crema launcher refuses the flag.
 
 What is tested
 --------------
@@ -72,14 +75,25 @@ What is tested
   statically-linked JDK's `JNU_*` symbols; the fallback child's `libjava.so`
   would bind to them and die booting (see `linux-hide-static-jdk-symbols` in
   `native/launcher/pom.xml`).
-* `BuildWithNonBakedPluginsTest` (non-crema) — `clean package` succeeds AND
-  leaves on-disk proof (jar + antrun marker file) that the delegated goals
-  really executed; the never-baked plugins (enforcer, antrun) AND a
-  version-mismatched baked one (clean, pinned older than any flavor bakes)
-  delegated to the HotSpot JVM with the pom's execution ids (`goal@id`).
+* `BuildWithNonBakedPluginsTest` (non-crema) — `--mode=mixed clean package`
+  succeeds AND leaves on-disk proof (jar + antrun marker file) that the
+  delegated goals really executed; the never-baked plugins (enforcer, antrun)
+  AND a version-mismatched baked one (clean, pinned older than any flavor
+  bakes) delegated to the HotSpot JVM with the pom's execution ids
+  (`goal@id`).
 * `FailurePropagationTest` (non-crema) — a failing delegated goal fails the
-  nmvn build, via the fallback's exit-code plumbing
+  `--mode=mixed` build, via the fallback's exit-code plumbing
   (`HotspotGoalFailedException`).
+* `NativeModeFailFastTest` (non-crema) — the DEFAULT mode and explicit
+  `--mode=native` fail fast on the non-baked plugins with the not-baked error
+  that suggests `--mode=mixed`; an unknown `--mode` value dies on the
+  launcher's usage error before any Maven machinery.
+* `LegacyModeTest` (non-crema) — `--mode=legacy clean package` runs the whole
+  build as ONE stock-Maven batch on the HotSpot JVM (jar + marker, the legacy
+  short-circuit line, no per-goal delegation); a failing legacy build
+  propagates its exit code.
+* `CremaModeRejectionTest` (crema) — the crema binary rejects `--mode`
+  outright, before any Maven machinery: crema has no modes.
 * `Spring410Test` / `Spring407Test` — one hardcoded test per example project
   under `examples/spring/<version>/` (`clean package -DskipTests=true`),
   class-level `@EnabledIf` enables them only when the binary's

@@ -33,12 +33,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * A real {@code clean package} of {@code examples/jvm-fallback-project}, run with the binary
- * under test ({@code -Dnmvn.binary}). That fixture's pom binds two plugins that are never baked
- * into an nmvn image — enforcer's {@code enforce@require-maven} and antrun's
+ * A real {@code --mode=mixed clean package} of {@code examples/jvm-fallback-project}, run with
+ * the binary under test ({@code -Dnmvn.binary}). That fixture's pom binds two plugins that are
+ * never baked into an nmvn image — enforcer's {@code enforce@require-maven} and antrun's
  * {@code run@write-marker} — plus a VERSION-MISMATCHED baked plugin (clean, pinned to 3.1.0
  * where every flavor bakes newer), so all three MUST run outside the baked realms via the
- * per-goal HotSpot delegation (the pom's comments explain the plugin choices). One build in
+ * per-goal HotSpot delegation (the pom's comments explain the plugin choices). The delegation is
+ * opt-in: {@code --mode=mixed} (NATIVEMVN.md "Modes") — under the default {@code --mode=native}
+ * the same build fails fast, which {@link NativeModeFailFastTest} covers. One build in
  * {@link BeforeAll}, every invariant a named test against it.
  *
  * <p>Non-crema only: crema would serve these plugins by runtime class loading, but that
@@ -50,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         value = "nmvn.e2e.NmvnBinary#isNonCrema",
         disabledReason = "crema runtime class loading of the non-baked plugins currently segfaults"
                 + " (graal-issue-crema-static-fields.md)")
-@DisplayName("clean package with non-baked plugins in the lifecycle")
+@DisplayName("--mode=mixed clean package with non-baked plugins in the lifecycle")
 class BuildWithNonBakedPluginsTest {
 
     private static final Path PROJECT = NmvnBinary.repoRoot().resolve("examples/jvm-fallback-project");
@@ -59,13 +61,13 @@ class BuildWithNonBakedPluginsTest {
 
     @BeforeAll
     static void cleanPackageTheFixtureProject() {
-        build = NmvnBinary.run(PROJECT, "clean", "package");
+        build = NmvnBinary.run(PROJECT, "--mode=mixed", "clean", "package");
     }
 
     @Test
     @DisplayName("the build succeeds")
     void buildSucceeds() {
-        build.assertSucceeded("clean package failed — the fallback (or crema runtime loading) is broken");
+        build.assertSucceeded("--mode=mixed clean package failed — the fallback is broken");
     }
 
     // The build's word is not enough: the jar and the antrun marker file prove the delegated

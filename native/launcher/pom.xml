@@ -194,7 +194,8 @@
            mvn -Pnative package -pl native/launcher -am -DskipTests \
              -Dnmvn.plugins="g:a:v,g:a:v,..."          (or -Dnmvn.pluginsFile=path; entries with
                                                         per-plugin |deps keys: whitespace-separated)
-         Output: target/${nmvn.imageName}. No plugins → baseline image (JVM fallback serves goals).
+         Output: target/${nmvn.imageName}. No plugins → baseline image (run it with mode=mixed
+         so the JVM fallback serves every goal; the default mode=native fails on non-baked ones).
          Variants: -Pnative alone = non-crema; -Pnative,crema = Crema (see the crema profile).
          Not yet covered vs the script: PGO, -Os. -->
     <profile>
@@ -325,13 +326,15 @@
             <artifactId>native-maven-plugin</artifactId>
             <configuration>
               <buildArgs combine.children="append">
+                <!-- RuntimeClassLoading doubles as the capability marker: the whole mode
+                     machinery is disabled on this variant — crema IS the JVM and has ONE
+                     behavior: baked plugins from prebuilt realms, everything else natively via
+                     runtime class loading. The launcher rejects the mode flag, the execution
+                     seam stays inert, and the HotSpot fallback never runs (it would bypass the
+                     very path this variant exists to exercise). PrebuiltPluginRealms.
+                     RUNTIME_CLASS_LOADING derives the answer from this flag's builder state. -->
                 <buildArg>-H:+RuntimeClassLoading</buildArg>
                 <buildArg>-H:+GraalJITCompileAtRuntime</buildArg>
-                <!-- Crema's runtime class loading serves non-baked plugins natively; delegating
-                     them to a HotSpot JVM would bypass the very path this variant exercises.
-                     Baked by PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT (build-time init);
-                     runtime -Dnmvn.jvm.fallback=true re-enables per invocation. -->
-                <buildArg>-Dnmvn.jvm.fallback.default=false</buildArg>
                 <!-- Blanket preserves: runtime-loaded plugin classes reflect over core/JDK types
                      on paths no build-time analysis can see, so the crema variant keeps the
                      keep-everything registration the non-crema variant replaced with precise

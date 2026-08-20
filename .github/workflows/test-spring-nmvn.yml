@@ -148,7 +148,7 @@ jobs:
           chmod +x ./mvnw
           ./mvnw -f native/launcher exec:exec -Dexec.appArgs="-f $REPO_ROOT/examples/java-maven-sample-project/ clean package"
 
-      - name: Test Native Maven Distribution
+      - name: Test the launcher on HotSpot (mock dual JVM, no image)
         run: |
           REPO_ROOT="$PWD"
           if command -v cygpath >/dev/null 2>&1; then

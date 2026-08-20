@@ -115,6 +115,17 @@ with instructions how to continue is emitted when some necessary plugin isn't
 _"baked in"_: A database of know flavors is searched and the most suitable one
 is suggested. Suggestion to opt-in into `--mode=mixed` is provided as well.
 
+### No Modes with Runtime Class Loading (Crema)
+
+The `--mode` option applies to the regular _Native Maven_ binaries only, whose
+native image is frozen and cannot load plugin classes at run time. Experimental
+binaries built with GraalVM's _runtime class loading_ (project _Crema_) are
+currently **not supported**. Such a binary has a single behavior with nothing
+for a mode to decide: _"baked in"_ plugins run from their prebuilt realms and
+every other plugin is loaded natively at run time — the binary is _"the JVM"_
+itself, no HotSpot ever gets involved. Passing `--mode` to such a binary is
+therefore rejected with an error.
+
 ## Opt-in
 
 The whole _Native Maven_ system is designed with compatibility in mind. It is

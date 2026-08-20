@@ -41,7 +41,9 @@ import org.slf4j.LoggerFactory;
  * jvm-channel's {@link JVM#create}, i.e. {@code JNI_CreateJavaVM} on {@code $JAVA_HOME}'s libjvm).
  * This is the non-crema answer to Crema's dynamic fallback: the frozen image cannot load plugin
  * classes at runtime, so the goal is re-invoked as {@code g:a:v:goal@execId} through STOCK Maven
- * from the already-required {@code MAVEN_HOME} dist, against the current project's pom.
+ * from the already-required {@code MAVEN_HOME} dist, against the current project's pom. The same
+ * machinery also serves {@code --mode=legacy} ({@link #runFullBuild}), where the whole command
+ * line runs as one stock-Maven batch.
  *
  * <p><b>One JVM per process.</b> HotSpot permits a single {@code JNI_CreateJavaVM} per process
  * and cannot be re-created after destruction, so the JVM is created lazily on the first delegated
@@ -60,7 +62,7 @@ import org.slf4j.LoggerFactory;
  * on disk without updating the native session's MavenProject, so a downstream baked install/deploy
  * in the same run will not see them.
  */
-final class HotspotMavenRunner {
+public final class HotspotMavenRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
     private static final ThreadLocal<Boolean> IN_OTHER_JVM = new ThreadLocal<>();
@@ -78,12 +80,14 @@ final class HotspotMavenRunner {
     private HotspotMavenRunner() {}
 
     /**
-     * Is the JVM fallback active? Only inside a native image; the default is baked per variant
-     * ({@link PrebuiltPluginRealms#JVM_FALLBACK_DEFAULT} — true for non-crema, false for crema,
-     * whose runtime class loading serves non-baked plugins natively); {@code -Dnmvn.jvm.fallback}
-     * overrides at run time.
+     * Mock Dual JVM Mode (JVM-FALLBACK.md "Mock Mode"): any
+     * {@code nmvn.plugins.<artifactId>=dynamic} system property activates the delegation seam on
+     * a PLAIN JVM, so the launcher and the execution seam can be run and debugged entirely in
+     * HotSpot. The delegated invocation then runs in this same process
+     * ({@link #hotSpotMavenMain} boots no second JVM outside image code), so the seam must stay
+     * inert on that thread — {@link #IN_OTHER_JVM} breaks the recursion.
      */
-    static boolean enabled() {
+    static boolean mockDualJvm() {
         if (Boolean.TRUE.equals(IN_OTHER_JVM.get())) {
             return false;
         }
@@ -97,9 +101,31 @@ final class HotspotMavenRunner {
                 }
             }
         }
-        return "runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode"))
-                && Boolean.parseBoolean(System.getProperty(
-                        "nmvn.jvm.fallback", String.valueOf(PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT)));
+        return false;
+    }
+
+    /**
+     * Is the per-goal delegation seam active? Inside a native image on the non-crema variant,
+     * where the seam applies the {@code --mode} policy ({@link NmvnMode}; crema has no modes —
+     * {@link PrebuiltPluginRealms#RUNTIME_CLASS_LOADING} serves non-baked plugins natively) — or
+     * on a plain JVM when {@link #mockDualJvm} activates it.
+     */
+    static boolean enabled() {
+        return mockDualJvm() || (NmvnMode.imageRuntime() && !PrebuiltPluginRealms.RUNTIME_CLASS_LOADING);
+    }
+
+    /**
+     * {@code --mode=legacy}: the WHOLE command line as one stock-Maven batch on the in-process
+     * HotSpot JVM, exit code returned. Called by {@code nmvn.launcher.NmvnLauncher} BEFORE the
+     * baked world boots — nothing runs natively; this is plain Apache Maven, kept in-process only
+     * to reuse the verified boot machinery (and its exit-code seam) instead of a shell script.
+     */
+    public static synchronized int runFullBuild(String[] mavenArgs) throws IOException {
+        LOG.info("nmvn: legacy mode — running the whole build on the in-process HotSpot JVM");
+        // Object[] like execute's args.toArray(): the channel cannot marshal a String[]
+        // ("No persistance for [Ljava.lang.String;")
+        final Object singleArrayArg = List.of(mavenArgs).toArray();
+        return hotSpotMavenMain().invokeMember("run", singleArrayArg).asInt();
     }
 
     /**

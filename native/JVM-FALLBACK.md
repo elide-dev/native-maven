@@ -58,13 +58,26 @@ wrapper jar must stay off that realm: classworlds is parent-first.
 
 - Active only at image runtime (`org.graalvm.nativeimage.imagecode=runtime`);
   completely inert on plain-JVM runs and in tests.
-- The default is **baked per variant** (`PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT`,
-  captured from the image builder's `-Dnmvn.jvm.fallback.default`): **on** for
-  non-crema, **off** for crema — the sidecar (and with it the fallback's sisu
-  component) is on both variants' classpaths, and under crema delegating to
-  HotSpot would bypass the runtime class loading that variant exists to exercise.
-- `-Dnmvn.jvm.fallback=true|false` at run time overrides the baked default
-  either way.
+- Selected by the launcher's `--mode` flag (`nmvn.NmvnMode`, spec in
+  NATIVEMVN.md "Modes"), which replaced the old boolean `-Dnmvn.jvm.fallback`:
+  `--mode=mixed` delegates non-baked goals one by one (this document);
+  `--mode=native` — the default — fails fast on a non-baked plugin with
+  follow-up suggestions instead; `--mode=legacy` never reaches the per-goal
+  seam — the launcher short-circuits the WHOLE command line onto the
+  in-process HotSpot JVM (`HotspotMavenRunner.runFullBuild`) before the baked
+  world boots.
+- The default mode is baked per image (`PrebuiltPluginRealms.MODE_DEFAULT`,
+  from the builder's `-Dnmvn.mode.default`; `native` when unset).
+- `--mode` is a NON-CREMA feature. The crema capability is DERIVED at image
+  build time from the builder's actual `-H:+RuntimeClassLoading` state
+  (`PrebuiltPluginRealms.RUNTIME_CLASS_LOADING`, the same answer `--info=variant`
+  reports), and with it the whole mode machinery is disabled: crema has one behavior — baked plugins from prebuilt
+  realms, everything else natively via runtime class loading (crema IS the
+  JVM) — so its launcher rejects any `--mode` with a usage error, the
+  execution seam stays inert (the sidecar is on both variants' classpaths),
+  and the HotSpot fallback never runs there.
+- `-Dnmvn.mode=...` also works on non-crema (the launcher mirrors `-D` args
+  into system properties); an explicit `--mode` flag wins over it.
 
 ## Supporting changes
 
@@ -147,8 +160,11 @@ org.apache.maven.plugins:maven-install-plugin:3.1.3"
 
 cd examples/java-maven-sample-project
 MAVEN_HOME=$PWD/../../apache-maven/target/apache-maven-4.1.0-SNAPSHOT \
-  ../../native/launcher/target/nmvn-native clean package
+  ../../native/launcher/target/nmvn-native --mode=mixed clean package
 ```
+
+(Without `--mode=mixed` the default `--mode=native` applies and the same run
+must instead fail fast on `jar:jar` with the not-baked error.)
 
 Expected: routing logs show clean/resources/compiler/surefire → BAKED and
 jar → DYNAMIC; one `booting in-process HotSpot JVM` line; `jar:jar` runs
@@ -160,7 +176,8 @@ one shared JVM, ~0.2 s per goal after boot).
 Verified scenarios (2026-08-11): mixed baked/delegated run; multiple
 delegations reusing the single JVM; pom `<execution>` configuration honored
 across the boundary via `goal@executionId` (antrun echo test); non-zero exit
-of a delegated goal fails the build; `-Dnmvn.jvm.fallback=false` gate.
+of a delegated goal fails the build; the off-gate (then
+`-Dnmvn.jvm.fallback=false`, now the default `--mode=native`).
 
 ## Gaps / known limitations
 

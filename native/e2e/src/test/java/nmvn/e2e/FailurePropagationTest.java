@@ -28,8 +28,8 @@ import org.junit.jupiter.api.condition.EnabledIf;
 /**
  * A FAILING delegated goal must fail the nmvn build. The {@code impossible-rule} profile of
  * {@code examples/jvm-fallback-project} adds an enforcer rule no Maven can satisfy
- * ({@code requireMavenVersion [99,)}), and enforcer is non-baked — so the failure must travel
- * back through the fallback's exit-code plumbing (temp file, readExitCode,
+ * ({@code requireMavenVersion [99,)}), and enforcer is non-baked — so under {@code --mode=mixed}
+ * the failure must travel back through the fallback's exit-code plumbing (temp file, readExitCode,
  * HotspotGoalFailedException). If that plumbing regresses, nmvn reports BUILD SUCCESS for
  * builds whose delegated goals failed, and no green CI would notice.
  */
@@ -46,7 +46,7 @@ class FailurePropagationTest {
 
     @BeforeAll
     static void cleanPackageTheFixtureProjectWithItsImpossibleRule() {
-        build = NmvnBinary.run(PROJECT, "clean", "package", "-Pimpossible-rule");
+        build = NmvnBinary.run(PROJECT, "--mode=mixed", "clean", "package", "-Pimpossible-rule");
     }
 
     @Test
