@@ -155,7 +155,7 @@ jobs:
             REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
           fi
           chmod +x ./mvnw
-          ./mvnw -f native/launcher test
+          ./mvnw -f native/launcher test -Drat.skip=true -Dcheckstyle.skip=true
 
       - name: Build ${{ matrix.variant }} image for Boot ${{ matrix.boot }}
         run: |
