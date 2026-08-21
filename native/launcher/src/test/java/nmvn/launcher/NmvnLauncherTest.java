@@ -65,7 +65,12 @@ public class NmvnLauncherTest {
 
     @BeforeEach
     public void setUp() {
-        System.getProperties().remove("org.graalvm.nativeimage.imagecode");
+        var it = System.getProperties().keySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().toString().startsWith("nmvn.plugins.")) {
+                it.remove();
+            }
+        }
         PrebuiltRoutingLog.reset();
         this.stdOutErr = new ByteArrayOutputStream();
     }
@@ -93,14 +98,46 @@ public class NmvnLauncherTest {
         assertEquals(5, nmvnLog.size(), "Five lines");
         // nmvn: plugin org.apache.maven.plugins:maven-clean-plugin:3.4.0 → DIRECT (no other jvm)
         for (var l : nmvnLog) {
-            assertTrue(l.contains("DIRECT (no other jvm)"), "Unexpected: " + l);
+            assertTrue(l.contains("DIRECT (dual jvm isn't enabled)"), "Unexpected: " + l);
         }
     }
 
     @Test
     public void mockDualJvmCleanAndBuildTheSampleProject() throws Exception {
-        // pretend we are running in a native image
-        System.getProperties().setProperty("org.graalvm.nativeimage.imagecode", "runtime");
+        // explicitly run all plugins in the other JVM
+        System.getProperties().setProperty("nmvn.plugins.maven-clean-plugin", "dynamic");
+        System.getProperties().setProperty("nmvn.plugins.maven-resources-plugin", "dynamic");
+        System.getProperties().setProperty("nmvn.plugins.maven-compiler-plugin", "dynamic");
+        System.getProperties().setProperty("nmvn.plugins.maven-jar-plugin", "dynamic");
+        System.getProperties().setProperty("nmvn.plugins.maven-surefire-plugin", "dynamic");
+
+        String[] args = new String[] { //
+            "-f",
+            javaMavenSampleProject.getCanonicalPath(), //
+            "clean",
+            "package" //
+        };
+        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr);
+        assertEquals(0, exitCode, "Executes without issues:\n" + stdOutErr);
+
+        var nmvnLog = stdOutErr
+                .toString()
+                .lines()
+                .filter(l -> l.contains("nmvn: plugin"))
+                .toList();
+
+        assertEquals(5, nmvnLog.size(), "Five lines");
+        // nmvn: plugin org.apache.maven.plugins:maven-clean-plugin:3.4.0 → DIRECT (no other jvm)
+        for (var l : nmvnLog) {
+            assertTrue(l.contains("DYNAMIC (property"), "Unexpected: " + l);
+            assertTrue(l.contains("set to dynamic"), "Unexpected: " + l);
+        }
+    }
+
+    @Test
+    public void mockDualJvmCleanOnly() throws Exception {
+        System.getProperties().setProperty("nmvn.plugins.maven-clean-plugin", "dynamic");
+        System.getProperties().setProperty("nmvn.plugins.maven-resources-plugin", "direct");
 
         String[] args = new String[] { //
             "-f",
@@ -120,7 +157,17 @@ public class NmvnLauncherTest {
         assertEquals(5, nmvnLog.size(), "Five lines");
         // nmvn: plugin org.apache.maven.plugins:maven-clean-plugin:3.4.0 → DIRECT (no other jvm)
         for (var l : nmvnLog) {
-            assertTrue(l.contains("DYNAMIC (no prebuilt plugins in this image)"), "Unexpected: " + l);
+            if (l.contains("maven-clean-plugin")) {
+                assertTrue(
+                        l.contains("DYNAMIC (property nmvn.plugins.maven-clean-plugin set to dynamic)"),
+                        "Unexpected: " + l);
+            } else if (l.contains("maven-resources-plugin")) {
+                assertTrue(
+                        l.contains("DIRECT (property nmvn.plugins.maven-resources-plugin set to direct)"),
+                        "Unexpected: " + l);
+            } else {
+                assertTrue(l.contains("DYNAMIC (no prebuilt plugins in this image)"), "Unexpected: " + l);
+            }
         }
     }
 

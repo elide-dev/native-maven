@@ -1292,9 +1292,12 @@ public final class PrebuiltPluginRealms {
         /** Null when baked; otherwise a short reason for dynamic fallback. */
         public final String dynamicReason;
 
-        Route(Prebuilt prebuilt, String dynamicReason) {
+        private final boolean direct;
+
+        private Route(Prebuilt prebuilt, String dynamicReason, boolean direct) {
             this.prebuilt = prebuilt;
             this.dynamicReason = dynamicReason;
+            this.direct = direct;
         }
 
         public boolean isBaked() {
@@ -1304,10 +1307,10 @@ public final class PrebuiltPluginRealms {
         /**
          * {@code true} when this plugin executed directly in this JVM.
          *
-         * @return {@link #isBaked()} or is not {@link HotspotMavenRunner#enabled()}
+         * @return {@link #isBaked()} or is not {@code direct}}
          */
         public boolean isDirect() {
-            return isBaked() || !HotspotMavenRunner.enabled();
+            return isBaked() || direct;
         }
     }
 
@@ -1322,25 +1325,36 @@ public final class PrebuiltPluginRealms {
      */
     public static Route route(
             String groupId, String artifactId, String requestedVersion, String requestedDependencyKey) {
+        var propName = "nmvn.plugins." + artifactId;
+        var value = System.getProperty(propName);
+        if (value != null) {
+            var reason = "property " + propName + " set to " + value;
+            return switch (value) {
+                case "dynamic" -> new Route(null, reason, false);
+                case "direct" -> new Route(null, reason, true);
+                default -> throw new IllegalStateException(reason);
+            };
+        }
+
         Prebuilt prebuilt = BY_KEY.get(groupId + ":" + artifactId);
         if (prebuilt == null) {
             if (!HotspotMavenRunner.enabled()) {
-                return new Route(null, "dual jvm isn't enabled");
+                return new Route(null, "dual jvm isn't enabled", true);
             }
             if (BY_KEY.isEmpty()) {
-                return new Route(null, "no prebuilt plugins in this image");
+                return new Route(null, "no prebuilt plugins in this image", false);
             }
-            return new Route(null, "not baked in this image");
+            return new Route(null, "not baked in this image", false);
         }
         String baked = prebuilt.descriptor.getVersion();
         if (requestedVersion != null && baked != null && !requestedVersion.equals(baked)) {
-            return new Route(null, "version mismatch (requested " + requestedVersion + ", baked " + baked + ")");
+            return new Route(null, "version mismatch (requested " + requestedVersion + ", baked " + baked + ")", false);
         }
         String reqDeps = requestedDependencyKey == null ? "" : requestedDependencyKey;
         if (!prebuilt.dependencyKey.equals(reqDeps)) {
-            return new Route(null, "per-plugin <dependencies> differ from baked set");
+            return new Route(null, "per-plugin <dependencies> differ from baked set", false);
         }
-        return new Route(prebuilt, null);
+        return new Route(prebuilt, null, true);
     }
 
     /**

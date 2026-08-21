@@ -46,7 +46,11 @@ public final class PrebuiltRoutingLog {
     static void log(Plugin plugin, PrebuiltPluginRealms.Route route) {
         var id = pluginId(plugin);
         if (route.isDirect()) {
-            logOnce(id, true, route.isBaked() ? "prebuilt realm" : "no other jvm");
+            var reason = route.dynamicReason;
+            if (reason == null) {
+                reason = route.isBaked() ? "prebuilt realm" : "no other jvm";
+            }
+            logOnce(id, true, reason);
         } else {
             logOnce(id, false, route.dynamicReason);
         }

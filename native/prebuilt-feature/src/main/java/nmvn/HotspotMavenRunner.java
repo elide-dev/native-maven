@@ -62,6 +62,7 @@ import org.slf4j.LoggerFactory;
 final class HotspotMavenRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
+    private static final ThreadLocal<Boolean> IN_OTHER_JVM = new ThreadLocal<>();
 
     /** Binary name of the HotSpot-side wrapper main; its jar is baked as an image resource. */
     private static final String MAIN_CLASS = "nmvn.hotspot.HotspotMavenMain";
@@ -82,6 +83,19 @@ final class HotspotMavenRunner {
      * overrides at run time.
      */
     static boolean enabled() {
+        if (Boolean.TRUE.equals(IN_OTHER_JVM.get())) {
+            return false;
+        }
+        for (var entry : System.getProperties().entrySet()) {
+            var prop = (String) entry.getKey();
+            var value = (String) entry.getValue();
+
+            if (prop.startsWith("nmvn.plugins.")) {
+                if (value.equals("dynamic")) {
+                    return true;
+                }
+            }
+        }
         return "runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode"))
                 && Boolean.parseBoolean(System.getProperty(
                         "nmvn.jvm.fallback", String.valueOf(PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT)));
@@ -96,17 +110,23 @@ final class HotspotMavenRunner {
     static synchronized void execute(MavenSession session, MojoExecution mojoExecution) throws IOException {
         var args = buildArgs(session, mojoExecution);
         LOG.info("nmvn: running {} on HotSpot JVM: mvn {}", mojoExecution, String.join(" ", args));
-        final Object singleArrayArg = args.toArray();
-        var code = hotSpotMavenMain().invokeMember("run", singleArrayArg);
-        int exitCode = code.asInt();
-        if (exitCode != 0) {
-            throw new HotspotGoalFailedException(
-                    "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
-        }
-        if (jvm == null) {
-            // when running in mock dual JVM
-            // some sink is always needed, otherwise there is StackOverflowError
-            MavenSimpleLogger.setLogSink((msg) -> {});
+        var singleArrayArg = args.toArray();
+        var prev = IN_OTHER_JVM.get();
+        try {
+            IN_OTHER_JVM.set(true);
+            var code = hotSpotMavenMain().invokeMember("run", (Object) singleArrayArg);
+            if (jvm == null) {
+                // when running in mock dual JVM
+                // some sink is always needed, otherwise there is StackOverflowError
+                MavenSimpleLogger.setLogSink((msg) -> {});
+            }
+            var exitCode = code.asInt();
+            if (exitCode != 0) {
+                throw new HotspotGoalFailedException(
+                        "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
+            }
+        } finally {
+            IN_OTHER_JVM.set(prev);
         }
     }
 

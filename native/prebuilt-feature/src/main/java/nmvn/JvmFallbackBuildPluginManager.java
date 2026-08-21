@@ -72,7 +72,7 @@ public class JvmFallbackBuildPluginManager extends DefaultBuildPluginManager {
     @Override
     public void executeMojo(MavenSession session, MojoExecution mojoExecution)
             throws MojoFailureException, MojoExecutionException, PluginConfigurationException, PluginManagerException {
-        if (HotspotMavenRunner.enabled() && !isBaked(mojoExecution)) {
+        if (HotspotMavenRunner.enabled() && !isExecuteDirect(mojoExecution)) {
             try {
                 HotspotMavenRunner.execute(session, mojoExecution);
             } catch (HotspotMavenRunner.HotspotGoalFailedException e) {
@@ -86,7 +86,7 @@ public class JvmFallbackBuildPluginManager extends DefaultBuildPluginManager {
         }
     }
 
-    private static boolean isBaked(MojoExecution mojoExecution) {
+    private static boolean isExecuteDirect(MojoExecution mojoExecution) {
         Plugin plugin = mojoExecution.getPlugin();
         if (plugin == null || plugin.isExtensions()) {
             // extensions plugins are never baked (structurally different realm); if one made it
@@ -98,6 +98,6 @@ public class JvmFallbackBuildPluginManager extends DefaultBuildPluginManager {
                         plugin.getArtifactId(),
                         plugin.getVersion(),
                         PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()))
-                .isBaked();
+                .isDirect();
     }
 }
