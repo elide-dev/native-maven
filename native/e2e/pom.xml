@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Standalone on purpose: e2e tests for an ALREADY BUILT nmvn native binary. This module
+       must never run in the normal reactor (it has nothing to compile against and needs a
+       binary on disk), so it has no parent and is not listed in any aggregator. Run it as:
+
+         mvn -f native/e2e/pom.xml test -Dnmvn.binary=build/nmvn-spring-4.1.0
+
+       See README.md for the full set of -Dnmvn.* properties. -->
+  <groupId>org.apache.maven.nmvn</groupId>
+  <artifactId>nmvn-e2e</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+  <name>Native Maven Binary E2E Tests</name>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.install.skip>true</maven.install.skip>
+    <maven.deploy.skip>true</maven.deploy.skip>
+    <!-- Defaults for the -Dnmvn.* switches so surefire's systemPropertyVariables always have
+         a value; NmvnBinary treats empty as unset. -->
+    <nmvn.binary />
+    <nmvn.variant>non-crema</nmvn.variant>
+    <nmvn.maven.home />
+    <nmvn.spring />
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.11.4</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+        <configuration>
+          <systemPropertyVariables>
+            <nmvn.binary>${nmvn.binary}</nmvn.binary>
+            <nmvn.variant>${nmvn.variant}</nmvn.variant>
+            <nmvn.maven.home>${nmvn.maven.home}</nmvn.maven.home>
+            <nmvn.spring>${nmvn.spring}</nmvn.spring>
+          </systemPropertyVariables>
+          <!-- Report the JUnit display names ("java-web-jar builds (clean package)") instead of
+               springExamples()[1][2] — the named tests are the point of this module. -->
+          <statelessTestsetReporter implementation="org.apache.maven.plugin.surefire.extensions.junit5.JUnit5Xml30StatelessReporter">
+            <usePhrasedTestCaseMethodName>true</usePhrasedTestCaseMethodName>
+          </statelessTestsetReporter>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
