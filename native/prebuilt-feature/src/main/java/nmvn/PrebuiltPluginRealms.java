@@ -1300,6 +1300,15 @@ public final class PrebuiltPluginRealms {
         public boolean isBaked() {
             return prebuilt != null;
         }
+
+        /**
+         * {@code true} when this plugin executed directly in this JVM.
+         *
+         * @return {@link #isBaked()} or is not {@link HotspotMavenRunner#enabled()}
+         */
+        public boolean isDirect() {
+            return isBaked() || !HotspotMavenRunner.enabled();
+        }
     }
 
     public static Prebuilt match(
@@ -1315,6 +1324,9 @@ public final class PrebuiltPluginRealms {
             String groupId, String artifactId, String requestedVersion, String requestedDependencyKey) {
         Prebuilt prebuilt = BY_KEY.get(groupId + ":" + artifactId);
         if (prebuilt == null) {
+            if (!HotspotMavenRunner.enabled()) {
+                return new Route(null, "dual jvm isn't enabled");
+            }
             if (BY_KEY.isEmpty()) {
                 return new Route(null, "no prebuilt plugins in this image");
             }

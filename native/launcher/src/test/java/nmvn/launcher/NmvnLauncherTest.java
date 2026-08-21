@@ -18,8 +18,10 @@
  */
 package nmvn.launcher;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 
+import nmvn.PrebuiltRoutingLog;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -28,10 +30,12 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class NmvnLauncherTest {
 
     private static File javaMavenSampleProject;
+    private ByteArrayOutputStream stdOutErr;
 
     public NmvnLauncherTest() {}
 
@@ -62,6 +66,8 @@ public class NmvnLauncherTest {
     @BeforeEach
     public void setUp() {
         System.getProperties().remove("org.graalvm.nativeimage.imagecode");
+        PrebuiltRoutingLog.reset();
+        this.stdOutErr = new ByteArrayOutputStream();
     }
 
     @AfterEach
@@ -75,8 +81,20 @@ public class NmvnLauncherTest {
             "clean",
             "package" //
         };
-        var exitCode = NmvnLauncher.runMain(args);
+        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr);
         assertEquals(0, exitCode, "Executes without issues");
+
+        var nmvnLog = stdOutErr
+                .toString()
+                .lines()
+                .filter(l -> l.contains("nmvn: plugin"))
+                .toList();
+
+        assertEquals(5, nmvnLog.size(), "Five lines");
+        // nmvn: plugin org.apache.maven.plugins:maven-clean-plugin:3.4.0 → DIRECT (no other jvm)
+        for (var l : nmvnLog) {
+            assertTrue(l.contains("DIRECT (no other jvm)"), "Unexpected: " + l);
+        }
     }
 
     @Test
@@ -90,8 +108,20 @@ public class NmvnLauncherTest {
             "clean",
             "package" //
         };
-        var exitCode = NmvnLauncher.runMain(args);
+        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr);
         assertEquals(0, exitCode, "Executes without issues");
+
+        var nmvnLog = stdOutErr
+                .toString()
+                .lines()
+                .filter(l -> l.contains("nmvn: plugin"))
+                .toList();
+
+        assertEquals(5, nmvnLog.size(), "Five lines");
+        // nmvn: plugin org.apache.maven.plugins:maven-clean-plugin:3.4.0 → DIRECT (no other jvm)
+        for (var l : nmvnLog) {
+            assertTrue(l.contains("DYNAMIC (no prebuilt plugins in this image)"), "Unexpected: " + l);
+        }
     }
 
     private static File child(File dir, String... children) {

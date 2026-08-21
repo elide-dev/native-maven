@@ -117,12 +117,12 @@ public class PrebuiltPluginRealmCache extends DefaultPluginRealmCache {
                 plugin.getArtifactId(),
                 plugin.getVersion(),
                 PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()));
+        PrebuiltRoutingLog.log(plugin, route);
         if (route.isBaked()) {
-            PrebuiltRoutingLog.baked(plugin);
             return new PrebuiltKey(route.prebuilt, plugin);
+        } else {
+            return super.createKey(plugin, parent, foreignImports, dependencyFilter, repositories, session);
         }
-        PrebuiltRoutingLog.dynamic(plugin, route.dynamicReason);
-        return super.createKey(plugin, parent, foreignImports, dependencyFilter, repositories, session);
     }
 
     @Override

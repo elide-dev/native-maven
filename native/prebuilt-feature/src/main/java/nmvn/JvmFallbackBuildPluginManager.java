@@ -81,9 +81,9 @@ public class JvmFallbackBuildPluginManager extends DefaultBuildPluginManager {
             } catch (IOException e) {
                 throw new MojoExecutionException("JVM fallback for " + mojoExecution + " failed", e);
             }
-            return;
+        } else {
+            super.executeMojo(session, mojoExecution);
         }
-        super.executeMojo(session, mojoExecution);
     }
 
     private static boolean isBaked(MojoExecution mojoExecution) {
