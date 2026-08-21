@@ -328,6 +328,35 @@ public final class PrebuiltPluginRealms {
             Boolean.parseBoolean(System.getProperty("nmvn.jvm.fallback.default", "true"));
 
     /**
+     * Whether THIS image supports runtime class loading — i.e. the crema variant. Captured at image
+     * build time (this class is initialize-at-build-time, so the initializer runs inside the
+     * builder) from the builder's ACTUAL {@code -H:+RuntimeClassLoading} state via
+     * {@code com.oracle.svm.core.hub.RuntimeClassLoading.isSupported()}: the flag itself is the
+     * ground truth, so there is no separate variant label to drift out of sync. Read reflectively —
+     * the sidecar compiles against the public SDK only. On a plain JVM run (tests) the SVM class
+     * does not exist and the answer is {@code false}, which is literally true: the runtime IS
+     * HotSpot.
+     */
+    public static final boolean RUNTIME_CLASS_LOADING = detectRuntimeClassLoading();
+
+    private static boolean detectRuntimeClassLoading() {
+        try {
+            return (Boolean) Class.forName("com.oracle.svm.core.hub.RuntimeClassLoading")
+                    .getMethod("isSupported")
+                    .invoke(null);
+        } catch (ClassNotFoundException e) {
+            return false; // not inside a native-image builder: a plain JVM run
+        } catch (Throwable t) {
+            // Builder present but the flag unreadable (internal API changed in this GraalVM).
+            // There is no correct fallback value — a wrong one is baked into the binary forever
+            // (--info=variant would lie, silently skipping variant-gated tests) — so ABORT the
+            // image build; the failure then surfaces exactly where it must be fixed.
+            throw new IllegalStateException(
+                    "nmvn: cannot read RuntimeClassLoading.isSupported() from this GraalVM builder", t);
+        }
+    }
+
+    /**
      * The {@code <exportedPackage>} entries of every {@code META-INF/maven/extension.xml} on the image
      * classpath — i.e. maven-core's (plus any core extension's). These are the packages whose class
      * identity is shared between the core realm and every plugin realm; see the import loop in
@@ -377,6 +406,14 @@ public final class PrebuiltPluginRealms {
     /** Human-readable status of the build-time initialization, surfaced for debugging. */
     public static final String STATUS;
 
+    /**
+     * The image FLAVOR, resolved at build time from the bake set itself: {@code spring@<boot>} when
+     * spring-boot-maven-plugin is baked (its version IS the Spring Boot version), else {@code
+     * generic}. Derived, not labeled — the flavor is defined BY the bake set, so an image whose
+     * Boot plugin failed the bake-or-fall-back gate honestly reports {@code generic}.
+     */
+    public static final String FLAVOR;
+
     static {
         ClassWorld world = null;
         ClassRealm core = null;
@@ -397,6 +434,8 @@ public final class PrebuiltPluginRealms {
         WORLD = world;
         CORE_REALM = core;
         STATUS = status;
+        Prebuilt boot = BY_KEY.get("org.springframework.boot:spring-boot-maven-plugin");
+        FLAVOR = boot == null ? "generic" : "spring@" + boot.descriptor.getVersion();
     }
 
     private PrebuiltPluginRealms() {}
