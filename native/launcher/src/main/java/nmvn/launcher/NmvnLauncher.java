@@ -46,6 +46,9 @@ public final class NmvnLauncher {
     private NmvnLauncher() {}
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 0 && (args[0].equals("--info") || args[0].startsWith("--info="))) {
+            System.exit(printInfo(args[0]));
+        }
         setupMavenEnvironment(args);
         mirrorCommandLineProperties(args);
         ClassWorld world = PrebuiltPluginRealms.world();
@@ -62,6 +65,60 @@ public final class NmvnLauncher {
         Thread.currentThread().setContextClassLoader(core);
         diagnose(core);
         System.exit(MavenCling.main(args, world));
+    }
+
+    /**
+     * Binary introspection: {@code --info=plugins|flavor|variant} prints one fact about THIS image
+     * and exits without booting Maven (works with no MAVEN_HOME/JAVA_HOME set). Every answer is
+     * DERIVED from what the binary contains or can do, never read from a build-time label — a label
+     * can drift from the content it describes, a derivation cannot:
+     * <ul>
+     * <li>{@code plugins} — the GAVs of the baked plugin registry, one per line. This is the
+     * post-gate truth: a plugin the build script requested but the bake-or-fall-back gate skipped
+     * is (correctly) absent.</li>
+     * <li>{@code flavor} — {@code spring@<bootVersion>} when spring-boot-maven-plugin is baked
+     * (its version IS the Spring Boot version), else {@code generic}; resolved at build time from
+     * the bake set, see {@link PrebuiltPluginRealms#FLAVOR}.</li>
+     * <li>{@code variant} — {@code crema} when this image was built with runtime class loading
+     * (the flag captured at build time from the builder itself, see
+     * {@link PrebuiltPluginRealms#RUNTIME_CLASS_LOADING}), else {@code hotspot}.</li>
+     * </ul>
+     *
+     * <p>Bare {@code --info} prints all facts as key/value pairs (for humans); {@code
+     * --info=<topic>} prints the bare value only (for scripts: {@code $(nmvn --info=flavor)}).
+     */
+    private static int printInfo(String arg) {
+        String what = arg.startsWith("--info=") ? arg.substring("--info=".length()) : "";
+        switch (what) {
+            case "plugins" -> bakedPluginGavs().forEach(System.out::println);
+            case "flavor" -> System.out.println(PrebuiltPluginRealms.FLAVOR);
+            case "variant" -> System.out.println(variant());
+            case "" -> {
+                // bare --info: all facts as key/value pairs, for humans
+                System.out.println("flavor: " + PrebuiltPluginRealms.FLAVOR);
+                System.out.println("variant: " + variant());
+                System.out.println("plugins:");
+                bakedPluginGavs().forEach(gav -> System.out.println("  " + gav));
+            }
+            default -> {
+                System.err.println("Usage: --info[=plugins|flavor|variant]");
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    private static java.util.List<String> bakedPluginGavs() {
+        var gavs = new java.util.ArrayList<String>();
+        for (var prebuilt : PrebuiltPluginRealms.all().values()) {
+            var descriptor = prebuilt.descriptor;
+            gavs.add(descriptor.getGroupId() + ":" + descriptor.getArtifactId() + ":" + descriptor.getVersion());
+        }
+        return gavs;
+    }
+
+    private static String variant() {
+        return PrebuiltPluginRealms.RUNTIME_CLASS_LOADING ? "crema" : "hotspot";
     }
 
     /**
