@@ -20,6 +20,7 @@ package nmvn.launcher;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.net.URISyntaxException;
 
 import nmvn.PrebuiltPluginRealms;
@@ -46,6 +47,10 @@ public final class NmvnLauncher {
     private NmvnLauncher() {}
 
     public static void main(String[] args) throws Exception {
+        System.exit(runMain(args));
+    }
+
+    static int runMain(String[] args) throws IOException, URISyntaxException {
         setupMavenEnvironment(args);
         mirrorCommandLineProperties(args);
         ClassWorld world = PrebuiltPluginRealms.world();
@@ -61,7 +66,8 @@ public final class NmvnLauncher {
         }
         Thread.currentThread().setContextClassLoader(core);
         diagnose(core);
-        System.exit(MavenCling.main(args, world));
+        var exitCode = MavenCling.main(args, world);
+        return exitCode;
     }
 
     /**
