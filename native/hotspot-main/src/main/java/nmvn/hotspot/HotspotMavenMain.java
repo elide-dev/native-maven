@@ -65,6 +65,8 @@ public final class HotspotMavenMain {
     private HotspotMavenMain() {}
 
     public static synchronized int run(String[] mavenArgs) throws Exception {
+        // we are not running in SVM, make sure the property is cleared
+        System.getProperties().remove("org.graalvm.nativeimage.imagecode");
         // launch() invokes m2.conf's enhanced main — MavenCling.main(args, world) — which RETURNS
         // its exit code instead of calling System.exit (same seam NmvnLauncher uses natively).
         launcher.launch(mavenArgs);

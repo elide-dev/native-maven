@@ -60,13 +60,30 @@ public class NmvnLauncherTest {
     public static void tearDownClass() {}
 
     @BeforeEach
-    public void setUp() {}
+    public void setUp() {
+        System.getProperties().remove("org.graalvm.nativeimage.imagecode");
+    }
 
     @AfterEach
     public void tearDown() {}
 
     @Test
     public void cleanAndBuildTheSampleProject() throws Exception {
+        String[] args = new String[] { //
+            "-f",
+            javaMavenSampleProject.getCanonicalPath(), //
+            "clean",
+            "package" //
+        };
+        var exitCode = NmvnLauncher.runMain(args);
+        assertEquals(0, exitCode, "Executes without issues");
+    }
+
+    @Test
+    public void mockDualJvmCleanAndBuildTheSampleProject() throws Exception {
+        // pretend we are running in a native image
+        System.getProperties().setProperty("org.graalvm.nativeimage.imagecode", "runtime");
+
         String[] args = new String[] { //
             "-f",
             javaMavenSampleProject.getCanonicalPath(), //

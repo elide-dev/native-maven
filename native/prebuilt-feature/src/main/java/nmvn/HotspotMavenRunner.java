@@ -27,8 +27,10 @@ import java.util.Map;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.plugin.MojoExecution;
+import org.apache.maven.slf4j.MavenSimpleLogger;
 import org.apidesign.jvm.channel.JVM;
 import org.apidesign.jvm.interop.OtherJvmClassLoader;
+import org.graalvm.nativeimage.ImageInfo;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -100,6 +102,11 @@ final class HotspotMavenRunner {
         if (exitCode != 0) {
             throw new HotspotGoalFailedException(
                     "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
+        }
+        if (jvm == null) {
+            // when running in mock dual JVM
+            // some sink is always needed, otherwise there is StackOverflowError
+            MavenSimpleLogger.setLogSink((msg) -> {});
         }
     }
 
@@ -201,7 +208,17 @@ final class HotspotMavenRunner {
 
     private static synchronized Value hotSpotMavenMain() throws IOException {
         if (clazzHotSpotMavenMain == null) {
-            var loader = OtherJvmClassLoader.create(jvm());
+            System.setProperty("polyglot.engine.WarnInterpreterOnly", "false");
+            var jvmOrNull = ImageInfo.inImageCode() ? jvm() : null;
+            var loader = OtherJvmClassLoader.create(jvmOrNull);
+            if (jvmOrNull == null) {
+                var mavenHome = System.getProperty("maven.home");
+                if (mavenHome == null) {
+                    throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
+                }
+                var classworldsConf = new File(new File(mavenHome, "bin"), "m2.conf");
+                System.setProperty("classworlds.conf", classworldsConf.getCanonicalPath());
+            }
             clazzHotSpotMavenMain = loader.loadClass(MAIN_CLASS);
         }
         return clazzHotSpotMavenMain;
@@ -217,13 +234,14 @@ final class HotspotMavenRunner {
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
+        var classworldsConf = new File(new File(mavenHome, "bin"), "m2.conf");
         var classpath = new StringBuilder();
         appendToCp(new File(mavenHome, "boot"), classpath);
         appendToCp(new File(mavenHome, "nmvn-boot"), classpath);
         var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
         options.add("-Dmaven.home=" + mavenHome);
-        options.add("-Dclassworlds.conf=" + new File(new File(mavenHome, "bin"), "m2.conf"));
+        options.add("-Dclassworlds.conf=" + classworldsConf);
         String multiModuleDir = System.getProperty("maven.multiModuleProjectDirectory");
         if (multiModuleDir != null) {
             options.add("-Dmaven.multiModuleProjectDirectory=" + multiModuleDir);
