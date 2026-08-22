@@ -26,6 +26,7 @@ import java.io.OutputStream;
 import java.net.URISyntaxException;
 
 import nmvn.PrebuiltPluginRealms;
+import nmvn.PrebuiltRoutingLog;
 import org.apache.maven.api.annotations.Nullable;
 import org.apache.maven.cling.MavenCling;
 import org.codehaus.plexus.classworlds.ClassWorld;
@@ -75,6 +76,9 @@ public final class NmvnLauncher {
         }
         Thread.currentThread().setContextClassLoader(core);
         diagnose(core);
+
+        PrebuiltRoutingLog.originalStdOut(stdOut);
+
         var exitCode = MavenCling.main(args, world, stdIn, stdOut, stdErr);
         return exitCode;
     }

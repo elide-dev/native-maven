@@ -18,6 +18,7 @@
  */
 package nmvn;
 
+import java.io.OutputStream;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,11 +37,19 @@ public final class PrebuiltRoutingLog {
     private static final Logger LOG = LoggerFactory.getLogger(PrebuiltRoutingLog.class);
 
     private static final Set<String> LOGGED = ConcurrentHashMap.newKeySet();
+    /** captures original output stream, if any */
+    static OutputStream originalStream = System.out;
 
     private PrebuiltRoutingLog() {}
 
     public static void reset() {
         LOGGED.clear();
+    }
+
+    public static synchronized void originalStdOut(OutputStream os) {
+        if (os != null && originalStream == null) {
+            originalStream = os;
+        }
     }
 
     static void log(Plugin plugin, PrebuiltPluginRealms.Route route) {

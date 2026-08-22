@@ -20,6 +20,7 @@ package nmvn;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -118,7 +119,11 @@ final class HotspotMavenRunner {
             if (jvm == null) {
                 // when running in mock dual JVM
                 // some sink is always needed, otherwise there is StackOverflowError
-                MavenSimpleLogger.setLogSink((msg) -> {});
+                MavenSimpleLogger.setLogSink((msg) -> {
+                    var w = new PrintWriter(PrebuiltRoutingLog.originalStream);
+                    w.println(msg);
+                    w.flush();
+                });
             }
             var exitCode = code.asInt();
             if (exitCode != 0) {
