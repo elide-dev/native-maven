@@ -286,6 +286,26 @@
         </plugins>
       </build>
     </profile>
+    <profile>
+      <!-- always use together with -Pnative,debug -->
+      <id>debug</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <buildArgs combine.children="append">
+                <arg>-g</arg>
+                <arg>-O0</arg>
+                <arg>-H:+SourceLevelDebug</arg>
+                <arg>-H:-DeleteLocalSymbols</arg>
+              </buildArgs>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <!-- MODIFIER profile — always together with native: mvn -Pnative,crema package ...
          Carries only the deltas vs the base native profile; everything shared (prep mojo, NBT
          config, static sidecar flags) comes from -Pnative. Needs a Crema-enabled GraalVM
