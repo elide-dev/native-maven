@@ -86,7 +86,7 @@ public class NmvnLauncherTest {
             "clean",
             "package" //
         };
-        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr);
+        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr, true);
         assertEquals(0, exitCode, "Executes without issues");
 
         var nmvnLog = stdOutErr
@@ -117,7 +117,7 @@ public class NmvnLauncherTest {
             "clean",
             "package" //
         };
-        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr);
+        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr, true);
         assertEquals(0, exitCode, "Executes without issues:\n" + stdOutErr);
 
         var nmvnLog = stdOutErr
@@ -145,7 +145,7 @@ public class NmvnLauncherTest {
             "clean",
             "package" //
         };
-        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr);
+        var exitCode = NmvnLauncher.runMain(args, null, stdOutErr, stdOutErr, true);
         assertEquals(0, exitCode, "Executes without issues");
 
         var nmvnLog = stdOutErr

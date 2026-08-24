@@ -54,12 +54,16 @@ public final class NmvnLauncher {
         if (args.length > 0 && (args[0].equals("--info") || args[0].startsWith("--info="))) {
             System.exit(printInfo(args[0]));
         } else {
-            System.exit(runMain(args, null, null, null));
+            System.exit(runMain(args, null, null, null, false));
         }
     }
 
     static int runMain(
-            String[] args, @Nullable InputStream stdIn, @Nullable OutputStream stdOut, @Nullable OutputStream stdErr)
+            String[] args,
+            @Nullable InputStream stdIn,
+            @Nullable OutputStream stdOut,
+            @Nullable OutputStream stdErr,
+            boolean embedded)
             throws IOException, URISyntaxException {
         setupMavenEnvironment(args);
         mirrorCommandLineProperties(args);
@@ -76,10 +80,9 @@ public final class NmvnLauncher {
         }
         Thread.currentThread().setContextClassLoader(core);
         diagnose(core);
-
         PrebuiltRoutingLog.originalStdOut(stdOut);
-
-        var exitCode = MavenCling.main(args, world, stdIn, stdOut, stdErr);
+        var cling = new MavenCling(world);
+        var exitCode = cling.run(args, stdIn, stdOut, stdErr, embedded);
         return exitCode;
     }
 
