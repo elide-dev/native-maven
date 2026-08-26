@@ -33,6 +33,10 @@ import org.junit.jupiter.api.condition.EnabledIf;
  * HotspotGoalFailedException). If that plumbing regresses, nmvn reports BUILD SUCCESS for
  * builds whose delegated goals failed, and no green CI would notice.
  */
+@EnabledIf(
+        value = "nmvn.e2e.NmvnBinary#isNonCrema",
+        disabledReason = "crema runtime class loading of the non-baked plugins currently segfaults"
+                + " (graal-issue-crema-static-fields.md), so a crema 'failure' here proves nothing")
 @DisplayName("a failing delegated goal fails the build")
 class FailurePropagationTest {
 
@@ -52,10 +56,7 @@ class FailurePropagationTest {
     }
 
     @Test
-    @EnabledIf(
-            value = "nmvn.e2e.NmvnBinary#isNonCrema",
-            disabledReason = "crema runs the goal natively — no fallback exit-code plumbing involved")
-    @DisplayName("non-crema: the failure came through the fallback's exit-code plumbing")
+    @DisplayName("the failure came through the fallback's exit-code plumbing")
     void failureCameThroughHotspotExitCodePlumbing() {
         build.assertOutputContains(
                 "failed on the HotSpot JVM (exit code",

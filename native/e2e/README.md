@@ -56,9 +56,11 @@ gated tests; `InfoTest` skips with the rebuild hint that explains why.
 | `nmvn.binary`     | *(none — required)*                                 | Binary to test, absolute or relative to the repo root; without it every test skips |
 | `nmvn.maven.home` | `apache-maven/target/apache-maven-4.1.0-SNAPSHOT`   | Maven dist the binary runs against (m2.conf, boot jars)                 |
 
-All tests live in `nmvn.e2e` and run on both variants; variant-specific
-assertions are gated per method with `@EnabledIf` (e.g. the delegation
-markers are non-crema-only), keyed off `--info=variant`.
+All tests live in `nmvn.e2e`; variant- and flavor-specific tests carry
+`@EnabledIf` gates keyed off the self-report. The fallback-contract classes
+(`BuildWithNonBakedPluginsTest`, `FailurePropagationTest`) are non-crema
+only: crema would serve the non-baked plugins by runtime class loading, which
+currently segfaults the binary (`graal-issue-crema-static-fields.md`).
 
 What is tested
 --------------
@@ -70,14 +72,14 @@ What is tested
   statically-linked JDK's `JNU_*` symbols; the fallback child's `libjava.so`
   would bind to them and die booting (see `linux-hide-static-jdk-symbols` in
   `native/launcher/pom.xml`).
-* `BuildWithNonBakedPluginsTest` — `clean package` succeeds AND leaves on-disk
-  proof (jar + antrun marker file) that the delegated goals really executed;
-  non-crema: the never-baked plugins (enforcer, antrun) AND a
+* `BuildWithNonBakedPluginsTest` (non-crema) — `clean package` succeeds AND
+  leaves on-disk proof (jar + antrun marker file) that the delegated goals
+  really executed; the never-baked plugins (enforcer, antrun) AND a
   version-mismatched baked one (clean, pinned older than any flavor bakes)
   delegated to the HotSpot JVM with the pom's execution ids (`goal@id`).
-* `FailurePropagationTest` — a failing delegated goal fails the nmvn build,
-  via the fallback's exit-code plumbing (`HotspotGoalFailedException`) on
-  non-crema.
+* `FailurePropagationTest` (non-crema) — a failing delegated goal fails the
+  nmvn build, via the fallback's exit-code plumbing
+  (`HotspotGoalFailedException`).
 * `Spring410Test` / `Spring407Test` — one hardcoded test per example project
   under `examples/spring/<version>/` (`clean package -DskipTests=true`),
   class-level `@EnabledIf` enables them only when the binary's

@@ -21,6 +21,7 @@ package nmvn.e2e;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -58,17 +59,15 @@ class Spring410Test {
     }
 
     @Test
-    @EnabledIf(
-            value = "nmvn.e2e.NmvnBinary#isCrema",
-            disabledReason = "needs runtime class loading — cannot build on a hotspot-variant image")
+    @Disabled("no variant builds this today: non-crema lacks runtime class loading, and crema"
+            + " crashes on it (CI exit 134, graal-issue-crema-static-fields.md)")
     void javaNativeJpaJar() {
         buildsCleanPackage("java-native-jpa-jar");
     }
 
     @Test
-    @EnabledIf(
-            value = "nmvn.e2e.NmvnBinary#isCrema",
-            disabledReason = "needs runtime class loading — cannot build on a hotspot-variant image")
+    @Disabled("no variant builds this today: non-crema lacks runtime class loading, and crema"
+            + " segfaults on it (CI exit 139, graal-issue-crema-static-fields.md)")
     void javaVaadim() {
         buildsCleanPackage("java-vaadim");
     }
