@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  E2E fixture for the JVM fallback (see test-nmvn-jvm-fallback.sh): a realistic project whose
+  E2E fixture for the JVM fallback (see native/e2e — BuildWithNonBakedPluginsTest and
+  FailurePropagationTest build this project): a realistic project whose
   NORMAL `clean package` needs plugins that are never baked into an nmvn image, bound to
   lifecycle phases with explicit execution ids. On the non-crema variant every one of these
   goals must delegate to the in-process HotSpot JVM; on crema they load at run time.
@@ -28,6 +29,16 @@
 
     <build>
         <plugins>
+            <!-- VERSION-MISMATCH fixture: clean IS baked into every nmvn flavor, but at a newer
+                 version (3.5.0 as of 2026-08) — pinning this old one forces the routing's
+                 version-mismatch path, so the default-clean execution must also delegate (or
+                 runtime-load on crema). Keep the version ancient enough that no flavor ever
+                 bakes it. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.1.0</version>
+            </plugin>
             <!-- non-baked, verdict-style: runs a rule and passes or fails the build -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

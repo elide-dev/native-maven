@@ -1,8 +1,8 @@
-# Build the nmvn image per Spring Boot version and variant (crema/non-crema) and smoke-test
-# it: every supported example project under examples/spring/<version>/ must build with the
-# freshly built binary (./test-nmvn-examples.sh, goals: clean package -DskipTests=true).
-# Projects a variant cannot support carry a .nmvn-unsupported-variants marker and are skipped
-# by the smoke test for that variant.
+# Build the nmvn image per Spring Boot version and variant (crema/non-crema) and run the
+# native/e2e suite against it: the suite interrogates the binary via --info and runs
+# everything that applies — spring example smoke builds for the baked flavor (clean package
+# -DskipTests=true), the JVM-fallback contract, the --info contract, and the Linux symbol
+# tripwire. Variant- and flavor-inapplicable tests disable themselves (@EnabledIf).
 #
 # Scope (deliberately smaller than release-spring-nmvn.yml, which this mirrors step-for-step):
 #   - same platform matrix as the release workflow, crossed with the Boot versions and
@@ -202,28 +202,13 @@ jobs:
           # Hand the resolved name (with .exe on Windows) to the smoke-test step.
           echo "NMVN_BIN=${BIN}" >> "$GITHUB_ENV"
 
-      - name: Smoke-test examples/spring against the image
-        run: |
-          set -euo pipefail
-          chmod +x test-nmvn-examples.sh
-          ./test-nmvn-examples.sh \
-            --spring "${{ matrix.boot }}" \
-            --nmvn-binary "${NMVN_BIN}" \
-            --variant "${{ matrix.variant }}" \
-            --keep-going
-
-      # E2E: examples/jvm-fallback-project binds non-baked plugins (enforcer, antrun) into a
-      # real `clean package`; those goals must run via the in-process HotSpot JVM, produce
-      # their on-disk effects, and propagate failures. See test-nmvn-jvm-fallback.sh.
-      - name: Exercise the JVM fallback (e2e build with non-baked plugins)
-        if: ${{ matrix.variant == 'non-crema' }}
-        run: |
-          set -euo pipefail
-          chmod +x test-nmvn-jvm-fallback.sh
-          ./test-nmvn-jvm-fallback.sh \
-            --nmvn-binary "${NMVN_BIN}" \
-            --maven-home "$PWD/apache-maven/target/apache-maven-4.1.0-SNAPSHOT" \
-            --variant "${{ matrix.variant }}"
+      # The whole e2e contract in one run (native/e2e, see its README): spring example smoke
+      # builds for the flavor this image reports via --info, the JVM-fallback contract
+      # (delegation markers, on-disk proof, exit-code propagation), the --info introspection
+      # contract, and the Linux JNU_* symbol tripwire. Tests that don't apply to this
+      # variant/flavor disable themselves — no per-variant step conditions needed.
+      - name: E2E-test the image (native/e2e)
+        run: ./mvnw -pl native/e2e test -B -Dnmvn.binary="${NMVN_BIN}"
 
       - name: Clean workspace outputs
         if: always()
