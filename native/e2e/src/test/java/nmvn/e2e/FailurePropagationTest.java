@@ -48,16 +48,17 @@ class FailurePropagationTest {
     @Test
     @DisplayName("the impossible enforcer rule fails the build")
     void impossibleRuleFailsTheBuild() {
-        build.assertFailed(
-                "the impossible enforcer rule did not fail the build — exit-code propagation is broken");
+        build.assertFailed("the impossible enforcer rule did not fail the build — exit-code propagation is broken");
     }
 
     @Test
-    @EnabledIf(value = "nmvn.e2e.NmvnBinary#isNonCrema",
+    @EnabledIf(
+            value = "nmvn.e2e.NmvnBinary#isNonCrema",
             disabledReason = "crema runs the goal natively — no fallback exit-code plumbing involved")
     @DisplayName("non-crema: the failure came through the fallback's exit-code plumbing")
     void failureCameThroughHotspotExitCodePlumbing() {
-        build.assertOutputContains("failed on the HotSpot JVM (exit code",
+        build.assertOutputContains(
+                "failed on the HotSpot JVM (exit code",
                 "build failed, but not via the fallback exit-code plumbing"
                         + " (HotspotGoalFailedException marker missing)");
     }

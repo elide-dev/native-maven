@@ -22,12 +22,14 @@ import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -74,12 +76,14 @@ class BuildWithNonBakedPluginsTest {
     @Test
     @DisplayName("antrun's marker file exists — the delegated goal really executed")
     void antrunMarkerFileExists() {
-        assertTrue(Files.isRegularFile(PROJECT.resolve("target/fallback-marker.txt")),
+        assertTrue(
+                Files.isRegularFile(PROJECT.resolve("target/fallback-marker.txt")),
                 "antrun's marker file is missing — the delegated goal reported success without executing");
     }
 
     @Test
-    @EnabledIf(value = "nmvn.e2e.NmvnBinary#isNonCrema",
+    @EnabledIf(
+            value = "nmvn.e2e.NmvnBinary#isNonCrema",
             disabledReason = "crema serves non-baked plugins natively — no delegation markers")
     @DisplayName("non-crema: enforcer:enforce delegated to the HotSpot JVM with its execution id")
     void enforcerDelegatesWithExecutionId() {
@@ -87,7 +91,8 @@ class BuildWithNonBakedPluginsTest {
     }
 
     @Test
-    @EnabledIf(value = "nmvn.e2e.NmvnBinary#isNonCrema",
+    @EnabledIf(
+            value = "nmvn.e2e.NmvnBinary#isNonCrema",
             disabledReason = "crema serves non-baked plugins natively — no delegation markers")
     @DisplayName("non-crema: antrun:run delegated to the HotSpot JVM with its execution id")
     void antrunDelegatesWithExecutionId() {
@@ -95,10 +100,33 @@ class BuildWithNonBakedPluginsTest {
     }
 
     @Test
-    @EnabledIf(value = "nmvn.e2e.NmvnBinary#isNonCrema",
+    @EnabledIf(
+            value = "nmvn.e2e.NmvnBinary#isNonCrema",
             disabledReason = "crema serves non-baked plugins natively — no delegation markers")
     @DisplayName("non-crema: a version-mismatched BAKED plugin (clean, pinned older) delegates too")
     void versionMismatchedCleanDelegates() {
         build.assertDelegated("maven-clean-plugin:3.1.0:clean", "default-clean");
+    }
+
+    /**
+     * Premise guard for {@link #versionMismatchedCleanDelegates}: that test only proves the
+     * version gate if this image really bakes a clean version OTHER than the fixture's pinned
+     * 3.1.0 — checked against the binary's own {@code --info=plugins} answer, so a bake-set
+     * change surfaces here as one clear failure instead of a confusing missing-marker one.
+     */
+    @Test
+    @DisplayName("the fixture's pinned clean 3.1.0 really mismatches this image's baked clean")
+    void pinnedCleanVersionMismatchesTheBake() {
+        List<String> bakedClean = NmvnBinary.info().plugins().stream()
+                .filter(gav -> gav.startsWith("org.apache.maven.plugins:maven-clean-plugin:"))
+                .toList();
+        assertFalse(
+                bakedClean.contains("org.apache.maven.plugins:maven-clean-plugin:3.1.0"),
+                "this image bakes clean 3.1.0 — the fixture's pin no longer mismatches; pick an"
+                        + " older pin in examples/jvm-fallback-project/pom.xml");
+        assertFalse(
+                bakedClean.isEmpty(),
+                "this image bakes no clean plugin at all — versionMismatchedCleanDelegates no"
+                        + " longer tests the version gate, only plain non-baked delegation");
     }
 }

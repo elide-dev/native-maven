@@ -23,6 +23,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 
 import org.opentest4j.TestAbortedException;
@@ -39,13 +41,15 @@ import static org.junit.jupiter.api.Assertions.fail;
  *   <li>{@code nmvn.binary} — REQUIRED: path to the built native binary, absolute or relative to
  *       the repo root (e.g. {@code build/nmvn-spring-4.1.0}). Tests never build images; without
  *       this property every test aborts ("skipped") with the reason
- *   <li>{@code nmvn.spring} — the Spring Boot version the binary was baked for; the spring
- *       example tests require it (see {@link #binaryForSpring})
- *   <li>{@code nmvn.variant} — {@code non-crema} (default) or {@code crema}; crema serves
- *       non-baked plugins via runtime class loading, so the delegation-marker tests don't apply
  *   <li>{@code nmvn.maven.home} — Maven dist the binary runs against (default:
  *       {@code apache-maven/target/apache-maven-4.1.0-SNAPSHOT} under the repo root)
  * </ul>
+ *
+ * <p>Everything else about the binary — its flavor (which Spring Boot version it was baked for,
+ * or generic) and its variant (crema/hotspot) — is ASKED OF THE BINARY via {@code --info}
+ * ({@link #info()}), never declared: a declaration can lie about the image it accompanies, the
+ * image's own answer cannot. The spring example tests and the variant-gated assertions all key
+ * off that self-report.
  *
  * The class only resolves that configuration and runs binaries; WHAT to build is the caller's:
  * every {@code run} variant takes the project directory explicitly.
@@ -89,29 +93,6 @@ public final class NmvnBinary {
         return binary;
     }
 
-    /**
-     * The binary under test, asserted to be baked for the given Spring Boot version:
-     * {@code -Dnmvn.spring} declares what {@code -Dnmvn.binary} was baked for, and examples of
-     * any other version abort rather than run against the wrong bake.
-     */
-    public static Path binaryForSpring(String fullVersion) {
-        String declared = property("nmvn.spring");
-        if (declared == null) {
-            throw new TestAbortedException("-Dnmvn.spring is not set — declare which Spring"
-                    + " version the binary under test was baked for, e.g. -Dnmvn.spring=" + fullVersion);
-        }
-        if (!digits(declared).equals(digits(fullVersion))) {
-            throw new TestAbortedException("the binary under test is declared for Spring " + declared
-                    + " — not running Spring " + fullVersion + " examples against it");
-        }
-        return binary();
-    }
-
-    /** "4.1.0" and "410" are the same version; compare on digits. */
-    private static String digits(String version) {
-        return version.replace(".", "");
-    }
-
     public static Path mavenHome() {
         String home = property("nmvn.maven.home");
         return home != null
@@ -119,17 +100,90 @@ public final class NmvnBinary {
                 : repoRoot().resolve("apache-maven/target/apache-maven-4.1.0-SNAPSHOT");
     }
 
-    public static String variant() {
-        return isCrema() ? "crema" : "non-crema";
-    }
+    // @EnabledIf conditions run during test DISCOVERY, where a missing/old binary must not blow
+    // up the run: when --info is unanswerable these fall back to the hotspot shape (isNonCrema
+    // true, isCrema false) and the tests themselves surface the real problem when they run.
 
+    /** Condition for {@code @EnabledIf}: the binary reports {@code --info=variant} = hotspot. */
     public static boolean isNonCrema() {
-        return !"crema".equals(property("nmvn.variant"));
+        return !isCrema();
     }
 
+    /** Condition for {@code @EnabledIf}: the binary reports {@code --info=variant} = crema. */
     public static boolean isCrema() {
-        return !isNonCrema();
+        try {
+            return "crema".equals(info().variant());
+        } catch (TestAbortedException e) {
+            return false;
+        }
     }
+
+    /** Condition for {@code @EnabledIf}: the binary reports {@code --info=flavor} = spring@4.0.7. */
+    public static boolean isSpring407() {
+        return hasFlavor("spring@4.0.7");
+    }
+
+    /** Condition for {@code @EnabledIf}: the binary reports {@code --info=flavor} = spring@4.1.0. */
+    public static boolean isSpring410() {
+        return hasFlavor("spring@4.1.0");
+    }
+
+    private static boolean hasFlavor(String flavor) {
+        try {
+            return flavor.equals(info().flavor());
+        } catch (TestAbortedException e) {
+            return false; // no binary, or one predating --info: InfoTest reports the real reason
+        }
+    }
+
+    /**
+     * What the binary says about itself ({@code --info}, memoized): its {@code flavor}
+     * ({@code spring@<bootVersion>} or {@code generic}), {@code variant} ({@code crema} or
+     * {@code hotspot}), and the baked plugin GAVs — all derived by the image from its own
+     * content, which is why tests trust it over any declaration. Aborts the calling test when
+     * the binary predates {@code --info} (PR #44).
+     */
+    public static BinaryInfo info() {
+        Path binary = binary();
+        BinaryInfo cached = INFO_CACHE.get(binary);
+        if (cached != null) {
+            return cached;
+        }
+        Run run = runBinaryIn(binary, repoRoot(), List.of("--info"));
+        BinaryInfo info = parseInfo(run);
+        INFO_CACHE.put(binary, info);
+        return info;
+    }
+
+    private static final ConcurrentMap<Path, BinaryInfo> INFO_CACHE = new ConcurrentHashMap<>();
+
+    private static BinaryInfo parseInfo(Run run) {
+        if (!run.succeeded()) {
+            throw new TestAbortedException("the binary under test does not answer --info (exit "
+                    + run.exitCode() + ") — it predates the introspection contract (PR #44);"
+                    + " rebuild it from current sources\n--- output ---\n" + run.outputTail(20));
+        }
+        String flavor = null;
+        String variant = null;
+        List<String> plugins = new ArrayList<>();
+        for (String line : run.output().split("\\R")) {
+            if (line.startsWith("flavor: ")) {
+                flavor = line.substring("flavor: ".length()).trim();
+            } else if (line.startsWith("variant: ")) {
+                variant = line.substring("variant: ".length()).trim();
+            } else if (line.startsWith("  ") && !line.isBlank()) {
+                plugins.add(line.trim());
+            }
+        }
+        if (flavor == null || variant == null) {
+            fail("--info exited 0 but its output has no flavor/variant lines — the introspection"
+                    + " contract changed; update NmvnBinary.parseInfo\n--- output ---\n" + run.output());
+        }
+        return new BinaryInfo(flavor, variant, List.copyOf(plugins));
+    }
+
+    /** The binary's {@code --info} self-report. */
+    public record BinaryInfo(String flavor, String variant, List<String> plugins) {}
 
     /** Runs the binary under test ({@link #binary()}) in the given project directory. */
     public static Run run(Path projectDir, String... args) {
@@ -141,9 +195,8 @@ public final class NmvnBinary {
         List<String> command = new ArrayList<>();
         command.add(binary.toString());
         command.addAll(args);
-        ProcessBuilder pb = new ProcessBuilder(command)
-                .directory(workDir.toFile())
-                .redirectErrorStream(true);
+        ProcessBuilder pb =
+                new ProcessBuilder(command).directory(workDir.toFile()).redirectErrorStream(true);
         // The binary needs MAVEN_HOME at run time (m2.conf, boot jars).
         pb.environment().put("MAVEN_HOME", mavenHome().toString());
         try {
@@ -151,8 +204,8 @@ public final class NmvnBinary {
             String output = new String(process.getInputStream().readAllBytes());
             if (!process.waitFor(BUILD_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
                 process.destroyForcibly();
-                fail("timed out after " + BUILD_TIMEOUT_MINUTES + " minutes: "
-                        + String.join(" ", command) + "\n--- output so far ---\n" + output);
+                fail("timed out after " + BUILD_TIMEOUT_MINUTES + " minutes: " + String.join(" ", command)
+                        + "\n--- output so far ---\n" + output);
             }
             return new Run(String.join(" ", command), process.exitValue(), output);
         } catch (IOException | InterruptedException e) {
@@ -182,13 +235,12 @@ public final class NmvnBinary {
         }
 
         public void assertOutputContains(String needle, String why) {
-            assertTrue(output.contains(needle),
-                    () -> why + " (expected output to contain: \"" + needle + "\")" + dump());
+            assertTrue(
+                    output.contains(needle), () -> why + " (expected output to contain: \"" + needle + "\")" + dump());
         }
 
         public void assertOutputLacks(String needle, String why) {
-            assertFalse(output.contains(needle),
-                    () -> why + " (output must NOT contain: \"" + needle + "\")" + dump());
+            assertFalse(output.contains(needle), () -> why + " (output must NOT contain: \"" + needle + "\")" + dump());
         }
 
         /**
@@ -198,8 +250,8 @@ public final class NmvnBinary {
          */
         public void assertDelegated(String pluginVersionGoal, String executionId) {
             assertOutputContains(
-                    "running org.apache.maven.plugins:" + pluginVersionGoal
-                            + " {execution: " + executionId + "} on HotSpot JVM",
+                    "running org.apache.maven.plugins:" + pluginVersionGoal + " {execution: " + executionId
+                            + "} on HotSpot JVM",
                     pluginVersionGoal + "@" + executionId
                             + " did not delegate to the HotSpot JVM (marker line missing)");
             assertOutputContains(

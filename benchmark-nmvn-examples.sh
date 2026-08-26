@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Benchmark classic Maven vs native nmvn on every project under
-# examples/spring/<version>/. Projects whose .nmvn-unsupported-variants marker
-# file lists the variant under test — or 'all' — are skipped, not benchmarked.
+# examples/spring/<version>/. Projects the variant under test cannot build
+# (UNSUPPORTED table below; the e2e suite encodes the same facts as @EnabledIf
+# in native/e2e's Spring*Test classes) are skipped, not benchmarked.
 #
 # Default command:
 #   clean package -DskipTests=true
@@ -20,8 +21,8 @@
 #                       root; also settable via NMVN_BINARY (required, no default;
 #                       the build scripts write to build/, e.g. build/nmvn-spring-4.1.0)
 #   --variant NAME      nmvn variant under test: crema or non-crema (default: crema;
-#                       also settable via NMVN_VARIANT) — projects whose
-#                       .nmvn-unsupported-variants marker lists it are skipped
+#                       also settable via NMVN_VARIANT) — projects the variant
+#                       cannot build (UNSUPPORTED table) are skipped
 #   --mvn CMD           classic Maven command (default: mvn on PATH, or MVN env)
 #   --goals "..."       Maven goals/args (default: clean package -DskipTests=true)
 #   --only NAME[,...]   only these example directory names
@@ -131,20 +132,28 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+# Projects a variant cannot build, as "project:variant" (variant 'all' = both). The e2e
+# suite (native/e2e Spring*Test) encodes the same facts as @EnabledIf on each project's
+# test — keep the two in sync:
+#   java-web-war: maven-war-plugin's Servlet 3.0 probe needs runtime class loading
+#     (non-crema-war-servlet-probe.md)
+#   java-native-jpa-jar, java-vaadim: need runtime class loading; marked 'all' while the
+#     crema variant is unproven — flip to :non-crema once a crema binary builds them
+UNSUPPORTED="java-web-war:non-crema java-native-jpa-jar:all java-vaadim:all"
+
 # Discover projects (directories under examples/spring/$SPRING_DIR/ that contain pom.xml).
 PROJECTS=()
 SKIPPED=()
 for d in "$EXAMPLES_DIR"/*/; do
   [ -f "${d}pom.xml" ] || continue
   name="$(basename "$d")"
-  # Variant opt-out: a project that cannot work on some variant carries a
-  # .nmvn-unsupported-variants file listing those variants — or 'all' — one per
-  # line, '#' comments. Applies even under --only: the project cannot pass here.
-  if [ -f "${d}.nmvn-unsupported-variants" ] \
-     && sed -e 's/#.*//' -e 's/[[:space:]]//g' "${d}.nmvn-unsupported-variants" | grep -qx -e "$VARIANT" -e all; then
-    SKIPPED+=("$name")
-    continue
-  fi
+  # Variant opt-out. Applies even under --only: the project cannot pass here.
+  case " $UNSUPPORTED " in
+    *" $name:$VARIANT "* | *" $name:all "*)
+      SKIPPED+=("$name")
+      continue
+      ;;
+  esac
   if [ -n "$ONLY" ]; then
     case ",$ONLY," in
       *",$name,"*) ;;

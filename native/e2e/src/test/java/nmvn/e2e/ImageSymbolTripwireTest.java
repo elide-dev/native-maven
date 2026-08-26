@@ -48,8 +48,10 @@ class ImageSymbolTripwireTest {
         String symbols = new String(nm.getInputStream().readAllBytes());
         assumeTrue(nm.waitFor() == 0, "nm -D not usable on this machine — skipping the tripwire");
 
-        List<String> jnu = symbols.lines().filter(line -> line.contains(" JNU_")).toList();
-        assertTrue(jnu.isEmpty(),
+        List<String> jnu =
+                symbols.lines().filter(line -> line.contains(" JNU_")).toList();
+        assertTrue(
+                jnu.isEmpty(),
                 () -> "image exports JNU_* symbols — exclude-libs,ALL stopped working, the"
                         + " fallback child JVM will crash booting:\n" + String.join("\n", jnu));
     }

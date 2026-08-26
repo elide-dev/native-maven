@@ -18,33 +18,28 @@
  */
 package nmvn.e2e;
 
-import java.io.IOException;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Smoke-builds every example project under {@code examples/spring/410} with the binary under
- * test, which {@code -Dnmvn.spring} must declare as baked for Spring Boot 4.1.0
- * ({@link NmvnBinary#binaryForSpring}) — with any other declaration these tests abort rather
- * than run against the wrong bake. One hardcoded test per project;
- * {@link #everyExampleDirectoryHasATest} fails loudly when the directory and this class drift
+ * test — enabled only when that binary reports itself ({@code --info=flavor}) as baked for
+ * Spring Boot 4.1.0, so these tests can never run against the wrong bake. One hardcoded test
+ * per project; {@link ExamplesLayoutTest} fails loudly when the directory and this class drift
  * apart.
  */
+@EnabledIf(
+        value = "nmvn.e2e.NmvnBinary#isSpring410",
+        disabledReason = "the binary under test does not report flavor spring@4.1.0 (--info=flavor)")
 @DisplayName("Spring Boot 4.1.0 examples build with the 4.1.0-baked binary")
 class Spring410Test {
 
-    private static final String SPRING_VERSION = "4.1.0";
     private static final Path EXAMPLES = NmvnBinary.repoRoot().resolve("examples/spring/410");
 
     @Test
@@ -63,56 +58,36 @@ class Spring410Test {
     }
 
     @Test
-    @EnabledIf(value = "nmvn.e2e.NmvnBinary#isCrema",
-            disabledReason = "needs runtime class loading (see the project's .nmvn-unsupported-variants)")
+    @EnabledIf(
+            value = "nmvn.e2e.NmvnBinary#isCrema",
+            disabledReason = "needs runtime class loading — cannot build on a hotspot-variant image")
     void javaNativeJpaJar() {
         buildsCleanPackage("java-native-jpa-jar");
     }
 
     @Test
-    @EnabledIf(value = "nmvn.e2e.NmvnBinary#isCrema",
-            disabledReason = "needs runtime class loading (see the project's .nmvn-unsupported-variants)")
+    @EnabledIf(
+            value = "nmvn.e2e.NmvnBinary#isCrema",
+            disabledReason = "needs runtime class loading — cannot build on a hotspot-variant image")
     void javaVaadim() {
         buildsCleanPackage("java-vaadim");
     }
 
     @Test
-    @EnabledIf(value = "nmvn.e2e.NmvnBinary#isCrema",
+    @EnabledIf(
+            value = "nmvn.e2e.NmvnBinary#isCrema",
             disabledReason = "maven-war-plugin's Servlet 3.0 probe needs runtime class loading"
                     + " (non-crema-war-servlet-probe.md)")
     void javaWebWar() {
         buildsCleanPackage("java-web-war");
     }
 
-    /** The tests above are hardcoded — this guard fails when the examples directory drifts. */
-    @Test
-    @DisplayName("every example directory has a test in this class")
-    void everyExampleDirectoryHasATest() throws IOException {
-        List<String> tested = List.of("java-jpa-jar", "java-native-jpa-jar", "java-no-deps-jar",
-                "java-vaadim", "java-web-jar", "java-web-war");
-        assertEquals(tested, projectsOnDisk(EXAMPLES),
-                EXAMPLES + " changed — add/remove the matching test in " + getClass().getSimpleName());
-    }
-
     private void buildsCleanPackage(String project) {
-        Path binary = NmvnBinary.binaryForSpring(SPRING_VERSION);
         NmvnBinary.Run build = NmvnBinary.runBinaryIn(
-                binary, EXAMPLES.resolve(project), List.of("-B", "clean", "package", "-DskipTests=true"));
-        assertTrue(build.succeeded(), () -> project + " failed (exit " + build.exitCode()
-                + ") — last 150 output lines:\n" + build.outputTail(150));
-    }
-
-    /** Sorted names of the example projects (subdirectories with a pom.xml). */
-    private static List<String> projectsOnDisk(Path examplesDir) throws IOException {
-        List<String> projects = new ArrayList<>();
-        try (DirectoryStream<Path> dirs = Files.newDirectoryStream(examplesDir, Files::isDirectory)) {
-            for (Path dir : dirs) {
-                if (Files.isRegularFile(dir.resolve("pom.xml"))) {
-                    projects.add(dir.getFileName().toString());
-                }
-            }
-        }
-        Collections.sort(projects);
-        return projects;
+                NmvnBinary.binary(), EXAMPLES.resolve(project), List.of("-B", "clean", "package", "-DskipTests=true"));
+        assertTrue(
+                build.succeeded(),
+                () -> project + " failed (exit " + build.exitCode() + ") — last 150 output lines:\n"
+                        + build.outputTail(150));
     }
 }

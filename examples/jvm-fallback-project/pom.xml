@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  E2E fixture for the JVM fallback (see test-nmvn-jvm-fallback.sh): a realistic project whose
+  E2E fixture for the JVM fallback (see native/e2e — BuildWithNonBakedPluginsTest and
+  FailurePropagationTest build this project): a realistic project whose
   NORMAL `clean package` needs plugins that are never baked into an nmvn image, bound to
   lifecycle phases with explicit execution ids. On the non-crema variant every one of these
   goals must delegate to the in-process HotSpot JVM; on crema they load at run time.

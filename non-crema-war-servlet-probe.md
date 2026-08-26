@@ -213,8 +213,9 @@ hatch that always works.
 NMVN_OUT_DIR="$PWD/build-noncrema" NMVN_VARIANT=non-crema \
   ./build-scripts/build-nmvn-catalog.sh build/catalogs/nmvn-spring-4.1.0.json
 
-# run the example suite (expects 3/4 today: java-web-war fails on the probe)
-./test-nmvn-examples.sh --spring 4.1.0 --nmvn-binary build-noncrema/nmvn-spring-4.1.0 --keep-going
+# reproduce: build the war example directly with the binary (the e2e suite skips it on
+# non-crema via java-web-war's @EnabledIf, exactly because of this probe failure)
+(cd examples/spring/410/java-web-war && ../../../../build-noncrema/nmvn-spring-4.1.0 -B clean package -DskipTests=true)
 ```
 
 Do not run two image builds concurrently — both run `mvn -pl native/... package -am` against

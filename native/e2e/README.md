@@ -26,14 +26,17 @@ instead of one red shell step. The tests build real projects with the binary:
 `examples/jvm-fallback-project` (non-baked plugins in the lifecycle) and every
 project under `examples/spring/<version>/`.
 
-This module is standalone by design: it is **not** part of the reactor (there
-is nothing to build until a binary exists) and is invoked explicitly.
+The suite tests the whole native stack — sidecar realms, launcher, fallback
+plumbing, dist — which is why it is a sibling module of the parts that
+produce the image, not part of any one of them. In a plain reactor build
+(no `-Dnmvn.binary`) every test aborts (JUnit "skipped"), so the reactor
+stays green without an image.
 
 Usage
 -----
 
 ```
-mvn -f native/e2e/pom.xml test -Dnmvn.binary=build/nmvn-spring-4.1.0 -Dnmvn.spring=4.1.0
+./mvnw -f native/e2e/pom.xml test -Dnmvn.binary=build/nmvn-spring-4.1.0
 ```
 
 Tests never build images — `-Dnmvn.binary` is **required** (see
@@ -41,20 +44,28 @@ Tests never build images — `-Dnmvn.binary` is **required** (see
 (JUnit "skipped") with that reason. CI passes one binary per matrix job, the
 same way as above.
 
+Everything else is **asked of the binary, never declared**: the suite runs
+`--info` once (memoized) and gates tests with `@EnabledIf` conditions on the
+self-report — the spring example classes on `flavor` (`spring@4.1.0` enables
+`Spring410Test`), the variant-gated assertions on `variant`
+(`crema`/`hotspot`). A binary that predates `--info` (PR #44) disables the
+gated tests; `InfoTest` skips with the rebuild hint that explains why.
+
 | Property          | Default                                             | Meaning                                                                 |
 |-------------------|-----------------------------------------------------|-------------------------------------------------------------------------|
 | `nmvn.binary`     | *(none — required)*                                 | Binary to test, absolute or relative to the repo root; without it every test skips |
-| `nmvn.spring`     | *(none)*                                            | Spring Boot version the binary was baked for, e.g. `4.1.0` or `410`; required by the spring example tests, and narrows them to that version |
-| `nmvn.variant`    | `non-crema`                                         | `non-crema` or `crema`; crema skips the delegation-marker tests         |
 | `nmvn.maven.home` | `apache-maven/target/apache-maven-4.1.0-SNAPSHOT`   | Maven dist the binary runs against (m2.conf, boot jars)                 |
 
 All tests live in `nmvn.e2e` and run on both variants; variant-specific
 assertions are gated per method with `@EnabledIf` (e.g. the delegation
-markers are non-crema-only).
+markers are non-crema-only), keyed off `--info=variant`.
 
 What is tested
 --------------
 
+* `InfoTest` — the `--info` introspection contract (flavor derived from the
+  bake set, variant crema/hotspot, bare-value topic form, no Maven boot);
+  the rest of the suite keys off these answers, so drift fails loudly here.
 * `ImageSymbolTripwireTest` (Linux) — the image must not dynamically export the
   statically-linked JDK's `JNU_*` symbols; the fallback child's `libjava.so`
   would bind to them and die booting (see `linux-hide-static-jdk-symbols` in
@@ -69,9 +80,12 @@ What is tested
   non-crema.
 * `Spring410Test` / `Spring407Test` — one hardcoded test per example project
   under `examples/spring/<version>/` (`clean package -DskipTests=true`),
-  enabled only when `-Dnmvn.spring` declares that version; per-variant skips
-  are `@EnabledIf` annotations, and a guard test fails when the examples
-  directory and the hardcoded list drift apart.
+  class-level `@EnabledIf` enables them only when the binary's
+  `--info=flavor` says it was baked for that version; per-variant skips are
+  method-level `@EnabledIf` annotations.
+* `ExamplesLayoutTest` — needs no binary and always runs: fails when an
+  `examples/spring/<version>` directory and its test class's hardcoded
+  project list drift apart.
 
 Adding a regression test for a new binary-level invariant: one class per
 expensive binary invocation (`@BeforeAll` runs the build via
