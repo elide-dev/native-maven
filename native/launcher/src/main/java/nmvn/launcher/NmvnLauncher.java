@@ -20,9 +20,14 @@ package nmvn.launcher;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URISyntaxException;
 
 import nmvn.PrebuiltPluginRealms;
+import nmvn.PrebuiltRoutingLog;
+import org.apache.maven.api.annotations.Nullable;
 import org.apache.maven.cling.MavenCling;
 import org.codehaus.plexus.classworlds.ClassWorld;
 import org.codehaus.plexus.classworlds.realm.ClassRealm;
@@ -48,7 +53,18 @@ public final class NmvnLauncher {
     public static void main(String[] args) throws Exception {
         if (args.length > 0 && (args[0].equals("--info") || args[0].startsWith("--info="))) {
             System.exit(printInfo(args[0]));
+        } else {
+            System.exit(runMain(args, null, null, null, false));
         }
+    }
+
+    static int runMain(
+            String[] args,
+            @Nullable InputStream stdIn,
+            @Nullable OutputStream stdOut,
+            @Nullable OutputStream stdErr,
+            boolean embedded)
+            throws IOException, URISyntaxException {
         setupMavenEnvironment(args);
         mirrorCommandLineProperties(args);
         ClassWorld world = PrebuiltPluginRealms.world();
@@ -64,7 +80,10 @@ public final class NmvnLauncher {
         }
         Thread.currentThread().setContextClassLoader(core);
         diagnose(core);
-        System.exit(MavenCling.main(args, world));
+        PrebuiltRoutingLog.originalStdOut(stdOut);
+        var cling = new MavenCling(world);
+        var exitCode = cling.run(args, stdIn, stdOut, stdErr, embedded);
+        return exitCode;
     }
 
     /**

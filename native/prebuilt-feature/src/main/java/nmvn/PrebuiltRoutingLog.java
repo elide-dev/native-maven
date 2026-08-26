@@ -18,6 +18,7 @@
  */
 package nmvn;
 
+import java.io.OutputStream;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -27,7 +28,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Once-per-plugin-id INFO logs for prebuilt routing decisions so a native binary run shows which
- * plugins are baked vs dynamic without spamming multi-module builds.
+ * plugins are running directly vs dynamic without spamming multi-module builds.
  *
  * <p>Disable with {@code -Dnmvn.routing.log=false}. Use DEBUG on this logger for every call site.
  */
@@ -36,18 +37,39 @@ public final class PrebuiltRoutingLog {
     private static final Logger LOG = LoggerFactory.getLogger(PrebuiltRoutingLog.class);
 
     private static final Set<String> LOGGED = ConcurrentHashMap.newKeySet();
+    /** captures original output stream, if any */
+    static OutputStream originalStream = System.out;
 
     private PrebuiltRoutingLog() {}
 
-    public static void baked(Plugin plugin) {
-        logOnce(pluginId(plugin), true, null);
+    public static void reset() {
+        LOGGED.clear();
     }
 
-    public static void dynamic(Plugin plugin, String reason) {
+    public static synchronized void originalStdOut(OutputStream os) {
+        if (os != null && originalStream == null) {
+            originalStream = os;
+        }
+    }
+
+    static void log(Plugin plugin, PrebuiltPluginRealms.Route route) {
+        var id = pluginId(plugin);
+        if (route.isDirect()) {
+            var reason = route.dynamicReason;
+            if (reason == null) {
+                reason = route.isBaked() ? "prebuilt realm" : "no other jvm";
+            }
+            logOnce(id, true, reason);
+        } else {
+            logOnce(id, false, route.dynamicReason);
+        }
+    }
+
+    static void dynamic(Plugin plugin, String reason) {
         logOnce(pluginId(plugin), false, reason);
     }
 
-    private static void logOnce(String pluginId, boolean baked, String reason) {
+    private static void logOnce(String pluginId, boolean direct, String reason) {
         if (!Boolean.parseBoolean(System.getProperty("nmvn.routing.log", "true"))) {
             return;
         }
@@ -55,10 +77,13 @@ public final class PrebuiltRoutingLog {
             LOG.debug("nmvn: route {} (already reported)", pluginId);
             return;
         }
-        if (baked) {
-            LOG.info("nmvn: plugin {} → BAKED (prebuilt realm)", pluginId);
+        if (reason == null) {
+            reason = "fallback";
+        }
+        if (direct) {
+            LOG.info("nmvn: plugin {} → DIRECT ({})", pluginId, reason);
         } else {
-            LOG.info("nmvn: plugin {} → DYNAMIC ({})", pluginId, reason != null ? reason : "fallback");
+            LOG.info("nmvn: plugin {} → DYNAMIC ({})", pluginId, reason);
         }
     }
 

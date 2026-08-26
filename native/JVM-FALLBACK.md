@@ -91,7 +91,50 @@ wrapper jar must stay off that realm: classworlds is parent-first.
   `-pl native/prebuilt-feature` without `-am` fails instead of baking a
   stale wrapper.
 
-## How to test
+## Running and Debugging
+
+Use the `exec:exec` plugin to execute the _native launcher_ code in a HotSpot
+JVM. Control the application arguments via `exec.appArgs` property. Control the
+HotSpot JVM arguments via `exec.vmArgs` property:
+```bash
+native-maven$ ./mvnw -f native/launcher exec:exec \
+  -Dexec.vmArgs=-agentlib:jdwp=transport=dt_socket,address=8000,server=y,suspend=n \
+  -Dexec.appArgs="-f $PWD/examples/java-maven-sample-project/ clean package"
+```
+The previous example asks for a clean build of the `examples/java-maven-sample-project`
+and instructs the JVM to start in a debug mode listening on port 8000.
+
+## Mock Mode
+
+In order to simplify development, there is so called [Mock Dual JVM Mode](https://github.com/elide-dev/native-maven/pull/45).
+It allows one to write tests like [mockDualJvmCleanOnly](https://github.com/elide-dev/native-maven/pull/45/changes#diff-1fe55b4a16e72712528866e14e3de604b9a1f08685d6ff61932321ab4967f2f7R139)
+that are running _completely in HotSpot JVM_, but can use properties to
+control which plugins get executed _"directly"_ and which _"dynamically"_:
+
+```java
+System.getProperties().setProperty("nmvn.plugins.maven-clean-plugin", "dynamic");
+System.getProperties().setProperty("nmvn.plugins.maven-resources-plugin", "direct");
+```
+
+The same properties can be used for [running](#running-and-debugging), hence the
+following code executes the `clean` pluging _dynamically_ while all other plugins
+are executed directly:
+
+```bash
+native-maven$ ./mvnw -f native/launcher exec:exec \
+  -Dexec.appArgs="-Dnmvn.plugins.maven-clean-plugin=dynamic -f $PWD/examples/java-maven-sample-project/ clean package"
+```
+
+That way one can use HotSpot [JVM debugger](#running-and-debugging) and step
+by step inspect the execution that mimics the behavior of final _Native Maven_
+application.
+
+<img width="892" height="1143" alt="Stacktrace"
+src="https://github.com/user-attachments/assets/a0ce1186-fb43-4334-9d47-84a61dd42835"
+/>
+
+
+## End to End Test
 
 ```bash
 # image with the example project's default plugin versions, MINUS maven-jar-plugin

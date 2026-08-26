@@ -59,7 +59,7 @@ public class PrebuiltPluginDescriptorCache extends DefaultPluginDescriptorCache 
                 .info("nmvn: descriptor cache override active ({})", PrebuiltPluginRealms.STATUS);
     }
 
-    /** Key marking a plugin that is served from the baked registry. */
+    /** Key marking a plugin that is served from the direct registry. */
     private static final class PrebuiltKey implements Key {
         final PrebuiltPluginRealms.Prebuilt prebuilt;
 
@@ -88,12 +88,12 @@ public class PrebuiltPluginDescriptorCache extends DefaultPluginDescriptorCache 
                 plugin.getArtifactId(),
                 plugin.getVersion(),
                 PrebuiltPluginRealms.dependencyKey(plugin.getDependencies()));
+        PrebuiltRoutingLog.log(plugin, route);
         if (route.isBaked()) {
-            PrebuiltRoutingLog.baked(plugin);
             return new PrebuiltKey(route.prebuilt);
+        } else {
+            return super.createKey(plugin, repositories, session);
         }
-        PrebuiltRoutingLog.dynamic(plugin, route.dynamicReason);
-        return super.createKey(plugin, repositories, session);
     }
 
     @Override
@@ -117,7 +117,7 @@ public class PrebuiltPluginDescriptorCache extends DefaultPluginDescriptorCache 
     @Override
     public void put(Key key, PluginDescriptor descriptor) {
         if (key instanceof PrebuiltKey) {
-            return; // baked entries are immutable; nothing to store
+            return; // direct entries are immutable; nothing to store
         }
         super.put(key, descriptor);
     }

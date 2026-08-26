@@ -20,6 +20,7 @@ package nmvn;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,8 +28,10 @@ import java.util.Map;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.plugin.MojoExecution;
+import org.apache.maven.slf4j.MavenSimpleLogger;
 import org.apidesign.jvm.channel.JVM;
 import org.apidesign.jvm.interop.OtherJvmClassLoader;
+import org.graalvm.nativeimage.ImageInfo;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +63,7 @@ import org.slf4j.LoggerFactory;
 final class HotspotMavenRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(HotspotMavenRunner.class);
+    private static final ThreadLocal<Boolean> IN_OTHER_JVM = new ThreadLocal<>();
 
     /** Binary name of the HotSpot-side wrapper main; its jar is baked as an image resource. */
     private static final String MAIN_CLASS = "nmvn.hotspot.HotspotMavenMain";
@@ -80,6 +84,19 @@ final class HotspotMavenRunner {
      * overrides at run time.
      */
     static boolean enabled() {
+        if (Boolean.TRUE.equals(IN_OTHER_JVM.get())) {
+            return false;
+        }
+        for (var entry : System.getProperties().entrySet()) {
+            var prop = (String) entry.getKey();
+            var value = (String) entry.getValue();
+
+            if (prop.startsWith("nmvn.plugins.")) {
+                if (value.equals("dynamic")) {
+                    return true;
+                }
+            }
+        }
         return "runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode"))
                 && Boolean.parseBoolean(System.getProperty(
                         "nmvn.jvm.fallback", String.valueOf(PrebuiltPluginRealms.JVM_FALLBACK_DEFAULT)));
@@ -94,12 +111,27 @@ final class HotspotMavenRunner {
     static synchronized void execute(MavenSession session, MojoExecution mojoExecution) throws IOException {
         var args = buildArgs(session, mojoExecution);
         LOG.info("nmvn: running {} on HotSpot JVM: mvn {}", mojoExecution, String.join(" ", args));
-        final Object singleArrayArg = args.toArray();
-        var code = hotSpotMavenMain().invokeMember("run", singleArrayArg);
-        int exitCode = code.asInt();
-        if (exitCode != 0) {
-            throw new HotspotGoalFailedException(
-                    "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
+        var singleArrayArg = args.toArray();
+        var prev = IN_OTHER_JVM.get();
+        try {
+            IN_OTHER_JVM.set(true);
+            var code = hotSpotMavenMain().invokeMember("run", (Object) singleArrayArg);
+            if (jvm == null) {
+                // when running in mock dual JVM
+                // some sink is always needed, otherwise there is StackOverflowError
+                MavenSimpleLogger.setLogSink((msg) -> {
+                    var w = new PrintWriter(PrebuiltRoutingLog.originalStream);
+                    w.println(msg);
+                    w.flush();
+                });
+            }
+            var exitCode = code.asInt();
+            if (exitCode != 0) {
+                throw new HotspotGoalFailedException(
+                        "Goal " + goalSpec(mojoExecution) + " failed on the HotSpot JVM (exit code " + exitCode + ")");
+            }
+        } finally {
+            IN_OTHER_JVM.set(prev);
         }
     }
 
@@ -201,7 +233,17 @@ final class HotspotMavenRunner {
 
     private static synchronized Value hotSpotMavenMain() throws IOException {
         if (clazzHotSpotMavenMain == null) {
-            var loader = OtherJvmClassLoader.create(jvm());
+            System.setProperty("polyglot.engine.WarnInterpreterOnly", "false");
+            var jvmOrNull = ImageInfo.inImageCode() ? jvm() : null;
+            var loader = OtherJvmClassLoader.create(jvmOrNull);
+            if (jvmOrNull == null) {
+                var mavenHome = System.getProperty("maven.home");
+                if (mavenHome == null) {
+                    throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
+                }
+                var classworldsConf = new File(new File(mavenHome, "bin"), "m2.conf");
+                System.setProperty("classworlds.conf", classworldsConf.getCanonicalPath());
+            }
             clazzHotSpotMavenMain = loader.loadClass(MAIN_CLASS);
         }
         return clazzHotSpotMavenMain;
@@ -217,13 +259,14 @@ final class HotspotMavenRunner {
         if (javaHome == null || mavenHome == null) {
             throw new IOException("java.home/maven.home not set — NmvnLauncher should have set both");
         }
+        var classworldsConf = new File(new File(mavenHome, "bin"), "m2.conf");
         var classpath = new StringBuilder();
         appendToCp(new File(mavenHome, "boot"), classpath);
         appendToCp(new File(mavenHome, "nmvn-boot"), classpath);
         var options = new ArrayList<String>();
         options.add("-Djava.class.path=" + classpath);
         options.add("-Dmaven.home=" + mavenHome);
-        options.add("-Dclassworlds.conf=" + new File(new File(mavenHome, "bin"), "m2.conf"));
+        options.add("-Dclassworlds.conf=" + classworldsConf);
         String multiModuleDir = System.getProperty("maven.multiModuleProjectDirectory");
         if (multiModuleDir != null) {
             options.add("-Dmaven.multiModuleProjectDirectory=" + multiModuleDir);

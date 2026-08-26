@@ -148,6 +148,15 @@ jobs:
           chmod +x ./mvnw
           ./mvnw -f native/launcher exec:exec -Dexec.appArgs="-f $REPO_ROOT/examples/java-maven-sample-project/ clean package"
 
+      - name: Test Native Maven Distribution
+        run: |
+          REPO_ROOT="$PWD"
+          if command -v cygpath >/dev/null 2>&1; then
+            REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+          fi
+          chmod +x ./mvnw
+          ./mvnw -f native/launcher test -Drat.skip=true -Dcheckstyle.skip=true
+
       - name: Build ${{ matrix.variant }} image for Boot ${{ matrix.boot }}
         run: |
           set -euo pipefail
