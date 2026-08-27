@@ -17,6 +17,12 @@
 #   resolve_boot_catalog.py → mvn -Pnative,crema (via build_image) → zip to dist/
 # then the generic image:
 #   build_image nmvn-generic -Dnmvn.plugins=@default-lifecycle → zip to dist/
+# and, on linux-x86_64 only (jars are platform-independent — one copy per release):
+#   the exploded Maven dist → nmvn-maven-dist-<version>.zip, with bin/ boot/ conf/ lib/
+#   nmvn-boot/ at the zip root. This is what --mode=mixed/legacy needs at run time:
+#   HotspotMavenRunner boots the in-process HotSpot from $MAVEN_HOME/boot + nmvn-boot
+#   (wrapper + jvm-channel jars) via bin/m2.conf — stock Apache Maven has no nmvn-boot/,
+#   so hosts (elide mvn) must install THIS dist, not an apache.org download.
 #
 name: Build Spring Native Maven
 
@@ -249,6 +255,26 @@ jobs:
           echo ">>> Packaged dist/${ZIP}"
 
           ls -la dist/
+
+      # The dist (incl. nmvn-boot/, populated by the distributionTargetDir build above) is
+      # required by --mode=mixed/legacy at run time; it is pure jars/config, so package it
+      # once, not per platform. Rides the same artifact upload + R2 publish as the images.
+      - name: Package Maven distribution (platform-independent)
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          set -euo pipefail
+          MAVEN_DIST="$PWD/apache-maven/target/apache-maven-dist"
+          for required in boot lib conf bin/m2.conf nmvn-boot; do
+            if [ ! -e "${MAVEN_DIST}/${required}" ]; then
+              echo "::error::Maven dist incomplete: missing ${required} under ${MAVEN_DIST}"
+              ls -la "${MAVEN_DIST}" || true
+              exit 1
+            fi
+          done
+          ZIP="$PWD/dist/nmvn-maven-dist-${RELEASE_VERSION}.zip"
+          (cd "${MAVEN_DIST}" && zip -qr "${ZIP}" .)
+          echo ">>> Packaged ${ZIP}"
+          unzip -l "${ZIP}" | head -20
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
