@@ -5,7 +5,7 @@
 #     the dist's maven-core jar by the generate-realm-spec mojo (@default-lifecycle), not
 #     hardcoded
 #
-# Images are built by the Maven native profiles (mvn -Pnative,crema package -pl native/launcher
+# Images are built by the Maven native profiles (mvn -Pnative package -pl native/launcher
 # -am; native-maven-plugin finds native-image from JAVA_HOME, incl. Windows). Layout:
 #   build/catalogs/   — catalogs + per-image .plugins lists (from resolve_boot_catalog.py)
 #   build/nmvn-spring-*, build/nmvn-generic — images (moved from native/launcher/target/)
@@ -154,10 +154,10 @@ jobs:
           rm -rf build dist
           mkdir -p dist
 
-          # Release images are the crema variant. ABSOLUTE paths only: Maven resolves relative
-          # Path mojo parameters against the MODULE basedir (native/launcher). Windows java
-          # needs C:/ style paths (cygpath -m).
-          PROFILES="native,crema"
+          # Release images are the non-crema variant (JVM fallback for non-baked goals).
+          # ABSOLUTE paths only: Maven resolves relative Path mojo parameters against the
+          # MODULE basedir (native/launcher). Windows java needs C:/ style paths (cygpath -m).
+          PROFILES="native"
           REPO_ROOT="$PWD"
           if command -v cygpath >/dev/null 2>&1; then
             REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
