@@ -20,8 +20,12 @@
 #
 name: Build Spring Native Maven
 
+# Releases are cut by pushing a v* tag (git tag v0.3.0 && git push origin v0.3.0);
+# workflow_dispatch stays as a manual fallback (zips are then named by sha, not tag).
 on:
   workflow_dispatch:
+  push:
+    tags: ['v*']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,6 +36,8 @@ permissions: {}
 env:
   # https://github.com/graalvm/graalvm-ce-builds/releases/tag/graal-25.2.4
   GRAAL_TAG: graal-25.2.4
+  # Version stamp for zip names: the tag on tag builds, the commit sha on manual runs.
+  RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.sha }}
 
 jobs:
   build:
@@ -202,7 +208,7 @@ jobs:
             fi
 
             PLUGINS="build/nmvn-spring-${BOOT}.plugins"
-            ZIP="nmvn-spring-${BOOT}-${{ matrix.platform }}-${{ github.sha }}.zip"
+            ZIP="nmvn-spring-${BOOT}-${{ matrix.platform }}-${RELEASE_VERSION}.zip"
             package_zip "dist/${ZIP}" "${BIN}" "${PLUGINS}"
             echo ">>> Packaged dist/${ZIP}"
           done
@@ -227,7 +233,7 @@ jobs:
             exit 1
           fi
 
-          ZIP="nmvn-generic-${{ matrix.platform }}-${{ github.sha }}.zip"
+          ZIP="nmvn-generic-${{ matrix.platform }}-${RELEASE_VERSION}.zip"
           package_zip "dist/${ZIP}" "${GENERIC_BIN}" build/nmvn-generic.plugins
           echo ">>> Packaged dist/${ZIP}"
 
@@ -247,7 +253,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     permissions:
       contents: read
 
