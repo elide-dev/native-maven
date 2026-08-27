@@ -25,6 +25,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URISyntaxException;
 
+import nmvn.HotspotMavenRunner;
+import nmvn.NmvnMode;
 import nmvn.PrebuiltPluginRealms;
 import nmvn.PrebuiltRoutingLog;
 import org.apache.maven.api.annotations.Nullable;
@@ -67,6 +69,17 @@ public final class NmvnLauncher {
             throws IOException, URISyntaxException {
         setupMavenEnvironment(args);
         mirrorCommandLineProperties(args);
+        args = extractMode(args);
+        if (NmvnMode.current() == NmvnMode.LEGACY
+                && NmvnMode.imageRuntime()
+                && !PrebuiltPluginRealms.RUNTIME_CLASS_LOADING) {
+            // Legacy = plain Apache Maven for the whole build: skip the baked world entirely and
+            // run the untouched command line as one batch on the in-process HotSpot JVM. (A
+            // plain-JVM launcher run IS legacy execution already, hence the image-runtime guard;
+            // crema has no modes at all — extractMode rejected the flag, and a mirrored
+            // -Dnmvn.mode is ignored here like everywhere else on that variant.)
+            return HotspotMavenRunner.runFullBuild(args);
+        }
         ClassWorld world = PrebuiltPluginRealms.world();
         ClassRealm core = world == null ? null : world.getClassRealm(PrebuiltPluginRealms.CORE_REALM_ID);
         if (core == null) {
@@ -166,6 +179,40 @@ public final class NmvnLauncher {
                 }
             }
         }
+    }
+
+    /**
+     * Consumes the launcher-owned {@code --mode=native|mixed|legacy} flag (NATIVEMVN.md "Modes"):
+     * publishes it as the {@code nmvn.mode} system property for the mojo-execution seam and
+     * returns the remaining arguments — stock Maven's CLI parser must never see the flag. Runs
+     * AFTER {@link #mirrorCommandLineProperties} so an explicit {@code --mode} wins over a
+     * mirrored {@code -Dnmvn.mode}. An invalid or valueless {@code --mode} ends the process with
+     * a usage error (exit 2) before any Maven machinery starts — as does ANY {@code --mode} on a
+     * crema image, which has no modes ({@link PrebuiltPluginRealms#RUNTIME_CLASS_LOADING}).
+     */
+    private static String[] extractMode(String[] args) {
+        var remaining = new java.util.ArrayList<String>(args.length);
+        for (String arg : args) {
+            if (arg.equals("--mode") || arg.startsWith("--mode=")) {
+                if (PrebuiltPluginRealms.RUNTIME_CLASS_LOADING) {
+                    System.err.println("Error: --mode is not supported by this Native Maven binary — it runs"
+                            + " every plugin natively (baked-in ones from prebuilt realms, others via"
+                            + " runtime class loading)");
+                    System.exit(2);
+                }
+                try {
+                    String value = arg.startsWith("--mode=") ? arg.substring("--mode=".length()) : "";
+                    System.setProperty(
+                            NmvnMode.PROPERTY, NmvnMode.parse(value).name().toLowerCase(java.util.Locale.ROOT));
+                } catch (IllegalArgumentException e) {
+                    System.err.println("Error: " + e.getMessage());
+                    System.exit(2);
+                }
+            } else {
+                remaining.add(arg);
+            }
+        }
+        return remaining.toArray(new String[0]);
     }
 
     /** Implements processing as originally done by {@code nmvn} script.

@@ -41,19 +41,28 @@ import org.eclipse.sisu.Priority;
 
 /**
  * Sidecar override of Maven's build plugin manager ({@code @Priority} outranks the default
- * binding, same seam pattern as {@link PrebuiltPluginDescriptorCache}). This is the EXECUTION-TIME
- * fallback for the non-crema image: a mojo whose plugin is not baked cannot run in the frozen
- * image (no runtime class loading), so instead of letting {@code getConfiguredMojo} die on
- * ClassNotFoundException, the mojo execution is delegated — at its exact slot in the lifecycle
- * plan, interleaved with baked mojos — to a HotSpot JVM booted inside this process (see
- * {@link HotspotMavenRunner}).
+ * binding, same seam pattern as {@link PrebuiltPluginDescriptorCache}). This is the
+ * EXECUTION-TIME seam where the launcher's {@code --mode} policy ({@link NmvnMode}) is applied to
+ * a mojo whose plugin is not baked — a NON-CREMA concern only: the frozen image cannot load the
+ * plugin's classes, so instead of letting {@code getConfiguredMojo} die on ClassNotFoundException
+ * the execution is either delegated — at its exact slot in the lifecycle plan, interleaved with
+ * baked mojos — to a HotSpot JVM booted inside this process ({@code --mode=mixed}, see
+ * {@link HotspotMavenRunner}), or failed fast with follow-up suggestions ({@code --mode=native}).
+ * {@code --mode=legacy} never reaches this seam: the launcher runs the whole build on the HotSpot
+ * JVM before Maven boots natively. On crema ({@link PrebuiltPluginRealms#RUNTIME_CLASS_LOADING})
+ * the whole mode machinery is disabled — the launcher rejects {@code --mode}, this seam stays
+ * inert, and runtime class loading serves non-baked plugins natively through the stock path;
+ * crema IS the JVM in that sense.
  *
- * <p>Routing mirrors the descriptor/realm caches ({@link PrebuiltPluginRealms#route}): baked
- * plugins take the stock path (which the caches then serve from the image heap); everything else —
- * not baked, version mismatch, differing per-plugin {@code <dependencies>}, extensions plugins —
- * goes to the JVM. On plain-JVM runs (tests, dev) this class is inert: {@code
- * HotspotMavenRunner.enabled()} requires image runtime, and stock dynamic resolution handles
- * everything.
+ * <p>Baked/non-baked routing mirrors the descriptor/realm caches ({@link
+ * PrebuiltPluginRealms#route}): baked plugins take the stock path (which the caches then serve
+ * from the image heap); everything else — not baked, version mismatch, differing per-plugin
+ * {@code <dependencies>}, extensions plugins — is non-baked. On plain-JVM runs (tests, dev) this
+ * class is inert — mode handling requires image runtime ({@link NmvnMode#imageRuntime()}), and
+ * stock dynamic resolution handles everything — UNLESS Mock Dual JVM Mode activates the seam
+ * ({@code nmvn.plugins.<artifactId>=dynamic} properties, see
+ * {@code HotspotMavenRunner.mockDualJvm} and JVM-FALLBACK.md "Mock Mode"), which always behaves
+ * like {@code --mode=mixed}.
  */
 @Named
 @Singleton
@@ -73,17 +82,44 @@ public class JvmFallbackBuildPluginManager extends DefaultBuildPluginManager {
     public void executeMojo(MavenSession session, MojoExecution mojoExecution)
             throws MojoFailureException, MojoExecutionException, PluginConfigurationException, PluginManagerException {
         if (HotspotMavenRunner.enabled() && !isExecuteDirect(mojoExecution)) {
-            try {
-                HotspotMavenRunner.execute(session, mojoExecution);
-            } catch (HotspotMavenRunner.HotspotGoalFailedException e) {
-                // the delegated plugin failed — surface it like a mojo failure, not an infra error
-                throw new MojoExecutionException(e.getMessage(), e);
-            } catch (IOException e) {
-                throw new MojoExecutionException("JVM fallback for " + mojoExecution + " failed", e);
+            // Mock Dual JVM Mode (plain JVM) exists to exercise the delegation itself, so it
+            // always behaves like --mode=mixed; inside the image the launcher's mode applies.
+            NmvnMode mode = NmvnMode.imageRuntime() ? NmvnMode.current() : NmvnMode.MIXED;
+            switch (mode) {
+                case NATIVE:
+                    throw notBakedInNativeMode(mojoExecution);
+                case MIXED:
+                case LEGACY: // unreachable via the launcher (legacy short-circuits before Maven
+                    // boots); a forced -Dnmvn.mode=legacy degrades to mixed
+                    try {
+                        HotspotMavenRunner.execute(session, mojoExecution);
+                    } catch (HotspotMavenRunner.HotspotGoalFailedException e) {
+                        // the delegated plugin failed — surface it like a mojo failure, not an
+                        // infra error
+                        throw new MojoExecutionException(e.getMessage(), e);
+                    } catch (IOException e) {
+                        throw new MojoExecutionException("JVM fallback for " + mojoExecution + " failed", e);
+                    }
+                    return;
             }
-        } else {
-            super.executeMojo(session, mojoExecution);
         }
+        super.executeMojo(session, mojoExecution);
+    }
+
+    /** The {@code --mode=native} contract: a non-baked plugin ends the build with follow-up suggestions. */
+    private static MojoExecutionException notBakedInNativeMode(MojoExecution mojoExecution) {
+        Plugin plugin = mojoExecution.getPlugin();
+        StringBuilder gav =
+                new StringBuilder().append(plugin.getGroupId()).append(':').append(plugin.getArtifactId());
+        if (plugin.getVersion() != null) {
+            gav.append(':').append(plugin.getVersion());
+        }
+        return new MojoExecutionException("Plugin " + gav + " is not baked into this Native Maven binary,"
+                + " and the current mode (--mode=native) runs baked-in plugins only. Possible next steps:\n"
+                + "  - rerun with --mode=mixed to run this plugin on an embedded HotSpot JVM"
+                + " (baked plugins keep running natively)\n"
+                + "  - use a Native Maven flavor that bakes this plugin (--flavor=..., see NATIVEMVN.md)\n"
+                + "  - rerun with --mode=legacy to run the whole build on a HotSpot JVM, like stock Apache Maven");
     }
 
     private static boolean isExecuteDirect(MojoExecution mojoExecution) {

@@ -317,15 +317,15 @@ public final class PrebuiltPluginRealms {
     private static final boolean STRICT_CLOSURE = Boolean.getBoolean("nmvn.prebuilt.strictClosure");
 
     /**
-     * Per-VARIANT default for the HotSpot JVM fallback, captured from the image BUILDER's
-     * {@code -Dnmvn.jvm.fallback.default} (this class is initialize-at-build-time, so the builder
-     * property is what the field snapshot sees). The crema build script bakes {@code false}:
-     * runtime class loading serves non-baked plugins natively there, and delegating to a HotSpot
-     * JVM would silently bypass the very path that variant exists to exercise. The runtime flag
-     * {@code -Dnmvn.jvm.fallback=true|false} overrides the baked default either way.
+     * Baked default for the launcher's {@code --mode} flag (non-crema only — see
+     * {@link #RUNTIME_CLASS_LOADING}), captured from the image BUILDER's
+     * {@code -Dnmvn.mode.default} (this class is initialize-at-build-time, so the builder
+     * property is what the field snapshot sees). Unset means {@code native}, the default
+     * NATIVEMVN.md specifies: a non-baked plugin fails fast with follow-up suggestions instead of
+     * silently delegating. {@code --mode=...} (or {@code -Dnmvn.mode=...}) overrides at run time;
+     * see {@link NmvnMode}.
      */
-    public static final boolean JVM_FALLBACK_DEFAULT =
-            Boolean.parseBoolean(System.getProperty("nmvn.jvm.fallback.default", "true"));
+    public static final String MODE_DEFAULT = System.getProperty("nmvn.mode.default", "native");
 
     /**
      * Whether THIS image supports runtime class loading — i.e. the crema variant. Captured at image
@@ -336,6 +336,12 @@ public final class PrebuiltPluginRealms {
      * the sidecar compiles against the public SDK only. On a plain JVM run (tests) the SVM class
      * does not exist and the answer is {@code false}, which is literally true: the runtime IS
      * HotSpot.
+     *
+     * <p>On a crema image the {@code --mode} machinery is DISABLED outright — crema IS the JVM:
+     * baked plugins run from their realms, everything else natively via runtime class loading,
+     * and there is nothing for a mode to decide. The launcher rejects the flag, the execution
+     * seam ({@link JvmFallbackBuildPluginManager}) stays inert, and the HotSpot fallback
+     * ({@link HotspotMavenRunner}) never runs.
      */
     public static final boolean RUNTIME_CLASS_LOADING = detectRuntimeClassLoading();
 
