@@ -9,7 +9,7 @@
 # -am; native-maven-plugin finds native-image from JAVA_HOME, incl. Windows). Layout:
 #   build/catalogs/   — catalogs + per-image .plugins lists (from resolve_boot_catalog.py)
 #   build/nmvn-spring-*, build/nmvn-generic — images (moved from native/launcher/target/)
-# Maven dist stays in apache-maven/target/.
+# Maven dist is exploded to apache-maven/target/apache-maven-dist (distributionTargetDir).
 #
 # Toolchain: download GraalVM CE 25.2.4, set JAVA_HOME (+ bin on PATH).
 #
@@ -135,7 +135,15 @@ jobs:
       - name: Build Maven distribution
         run: |
           chmod +x ./mvnw
-          ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true
+          # The exploded dist dir is only produced when distributionTargetDir activates the
+          # create-distribution-in-dir profile (upstream change); without it only the
+          # zip/tar.gz archives exist and the image build has no maven.home to bake.
+          REPO_ROOT="$PWD"
+          if command -v cygpath >/dev/null 2>&1; then
+            REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+          fi
+          ./mvnw clean package -B -DskipTests -Drat.skip=true -Dcheckstyle.skip=true \
+            -DdistributionTargetDir="$REPO_ROOT/apache-maven/target/apache-maven-dist"
 
       - name: Resolve catalogs and build Spring specialized + generic images
         run: |
@@ -147,17 +155,20 @@ jobs:
           mkdir -p dist
 
           # Release images are the crema variant. ABSOLUTE paths only: Maven resolves relative
-          # Path mojo parameters against the MODULE basedir (native/launcher). Dist dir by glob;
-          # Windows java needs C:/ style paths (cygpath -m).
+          # Path mojo parameters against the MODULE basedir (native/launcher). Windows java
+          # needs C:/ style paths (cygpath -m).
           PROFILES="native,crema"
           REPO_ROOT="$PWD"
           if command -v cygpath >/dev/null 2>&1; then
             REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
           fi
-          MAVEN_DIST=""
-          for d in apache-maven/target/apache-maven-*; do
-            [ -d "$d/lib" ] && MAVEN_DIST="$REPO_ROOT/$d" && break
-          done
+          # Where the dist build step exploded the distribution (distributionTargetDir).
+          MAVEN_DIST="$REPO_ROOT/apache-maven/target/apache-maven-dist"
+          if [ ! -d "$MAVEN_DIST/lib" ]; then
+            echo "::error::Maven dist not found at ${MAVEN_DIST} — distributionTargetDir build missing?"
+            ls -la apache-maven/target/ || true
+            exit 1
+          fi
 
           build_image() {
             # $1 = image name; remaining args = -Dnmvn.plugins* selection
