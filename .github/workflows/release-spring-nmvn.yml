@@ -24,6 +24,19 @@
 #   (wrapper + jvm-channel jars) via bin/m2.conf — stock Apache Maven has no nmvn-boot/,
 #   so hosts (elide mvn) must install THIS dist, not an apache.org download.
 #
+# The publish job lists every zip's SHA-256 in SHA256SUMS-<version> (sha256sum format) and
+# signs it keylessly with Sigstore cosign through GitHub OIDC, next to the zips on R2:
+#   SHA256SUMS-<version>                — "<sha256>  <zip name>" per line, sorted by name
+#   SHA256SUMS-<version>.sigstore.json  — cosign bundle (signature, Fulcio certificate,
+#                                         Rekor inclusion proof)
+# Hosts (elide mvn) verify the bundle against this workflow's identity, then each zip
+# against its line:
+#   cosign verify-blob SHA256SUMS-<version> \
+#     --bundle SHA256SUMS-<version>.sigstore.json \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --certificate-identity \
+#       https://github.com/elide-dev/native-maven/.github/workflows/release-spring-nmvn.yml@refs/tags/<version>
+#
 name: Build Spring Native Maven
 
 # Releases are cut by pushing a v* tag (git tag v0.3.0 && git push origin v0.3.0);
@@ -293,6 +306,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     permissions:
       contents: read
+      id-token: write # keyless cosign signing of SHA256SUMS via GitHub OIDC
 
     steps:
       - name: Download all artifacts
@@ -303,6 +317,35 @@ jobs:
 
       - name: List artifacts
         run: find artifacts -type f | sort
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      # Every artifact is a flat zip in artifacts/ (merge-multiple), and R2 is one flat prefix, so
+      # the checksum file carries the release version to sit beside that release's zips.
+      - name: Write and sign SHA256SUMS
+        env:
+          SUMS: SHA256SUMS-${{ env.RELEASE_VERSION }}
+          IDENTITY: ${{ github.server_url }}/${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          if find . -mindepth 1 ! -name '*.zip' | grep -q .; then
+            echo "::error::Expected only flat zips in artifacts/"
+            find . -mindepth 1 ! -name '*.zip'
+            exit 1
+          fi
+          LC_ALL=C sha256sum -- *.zip | LC_ALL=C sort -k2 > "${SUMS}"
+          cat "${SUMS}"
+          cosign sign-blob --yes --bundle "${SUMS}.sigstore.json" "${SUMS}"
+          # Fails the release unless the bundle verifies as this workflow run's own signature.
+          cosign verify-blob "${SUMS}" \
+            --bundle "${SUMS}.sigstore.json" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "${IDENTITY}"
+          sha256sum --check --strict "${SUMS}"
 
       - name: Publish to R2
         uses: elide-tools/r2-upload-action@main
